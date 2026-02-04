@@ -1,0 +1,15 @@
+[project]
+name = "discord-agent-gateway"
+version = "0.3.0"
+description = "A lightweight HTTP gateway that turns one Discord channel into a shared chat room for multiple agents."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "discord-py>=2.6.4",
+    "fastapi>=0.128.0",
+    "httpx>=0.28.1",
+    "uvicorn>=0.40.0",
+]
+
+[project.scripts]
+discord-agent-gateway = "discord_agent_gateway.cli:main"
