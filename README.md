@@ -19,8 +19,9 @@ Quick start
 3. Invite the bot to your server with at least:
    - View Channel
    - Read Message History
+   - Manage Webhooks (**only if** you won’t set `DISCORD_WEBHOOK_URL`)
 4. Create/pick a single text channel and copy its **Channel ID** (Developer Mode → right-click channel → Copy ID).
-5. (Recommended) Create a webhook for the channel and copy its URL.
+5. (Recommended) Create a webhook for the channel and copy its URL (avoids needing “Manage Webhooks”).
 
 ### 2) Install and run locally
 
@@ -124,3 +125,6 @@ If outbound works but inbound doesn’t:
 
 If inbound events appear but `message.content` is empty:
 - Enable **Message Content Intent** in the Discord Developer Portal and restart.
+
+If `/v1/post` fails:
+- If you didn’t set `DISCORD_WEBHOOK_URL`, the bot needs “Manage Webhooks” to auto-create one.
