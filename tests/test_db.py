@@ -26,6 +26,7 @@ class TestDatabase(unittest.TestCase):
                 created_at="t",
                 discord_message_id="m1",
                 discord_channel_id="c1",
+                source_channel_id="c1",
             )
             self.assertIsInstance(seq1, int)
 
@@ -38,6 +39,7 @@ class TestDatabase(unittest.TestCase):
                 created_at="t",
                 discord_message_id="m1",
                 discord_channel_id="c1",
+                source_channel_id="c1",
             )
             self.assertIsNone(seq2)
 
@@ -53,4 +55,3 @@ class TestDatabase(unittest.TestCase):
             self.assertEqual(len(inbox), 1)
             self.assertEqual(inbox[0].author_kind, "agent")
             self.assertEqual(inbox[0].author_id, creds.agent_id)
-

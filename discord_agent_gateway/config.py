@@ -22,6 +22,10 @@ class Settings:
     discord_api_base: str
     discord_max_message_len: int
 
+    backfill_enabled: bool
+    backfill_seed_limit: int
+    backfill_archived_thread_limit: int
+
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> "Settings":
         log_level = (environ.get("LOG_LEVEL") or "INFO").upper().strip() or "INFO"
@@ -65,6 +69,21 @@ class Settings:
         else:
             discord_max_message_len = 1900
 
+        backfill_enabled_raw = (environ.get("BACKFILL_ENABLED") or "true").strip().lower()
+        backfill_enabled = backfill_enabled_raw not in ("0", "false", "no", "off")
+
+        seed_raw = (environ.get("BACKFILL_SEED_LIMIT") or "200").strip() or "200"
+        try:
+            backfill_seed_limit = int(seed_raw)
+        except ValueError as exc:
+            raise ValueError("BACKFILL_SEED_LIMIT must be an integer.") from exc
+
+        archived_raw = (environ.get("BACKFILL_ARCHIVED_THREAD_LIMIT") or "25").strip() or "25"
+        try:
+            backfill_archived_thread_limit = int(archived_raw)
+        except ValueError as exc:
+            raise ValueError("BACKFILL_ARCHIVED_THREAD_LIMIT must be an integer.") from exc
+
         settings = cls(
             log_level=log_level,
             discord_bot_token=discord_bot_token,
@@ -76,6 +95,9 @@ class Settings:
             gateway_base_url=gateway_base_url,
             discord_api_base=discord_api_base,
             discord_max_message_len=discord_max_message_len,
+            backfill_enabled=backfill_enabled,
+            backfill_seed_limit=backfill_seed_limit,
+            backfill_archived_thread_limit=backfill_archived_thread_limit,
         )
         settings.validate()
         return settings
@@ -94,6 +116,10 @@ class Settings:
         if not (1 <= self.discord_max_message_len <= 2000):
             errors.append("DISCORD_MAX_MESSAGE_LEN must be between 1 and 2000.")
 
+        if self.backfill_seed_limit < 0:
+            errors.append("BACKFILL_SEED_LIMIT must be >= 0.")
+        if self.backfill_archived_thread_limit < 0:
+            errors.append("BACKFILL_ARCHIVED_THREAD_LIMIT must be >= 0.")
+
         if errors:
             raise ValueError(" ".join(errors))
-

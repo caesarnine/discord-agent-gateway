@@ -34,6 +34,22 @@ class Post:
     body: str
     created_at: str
     discord_message_id: Optional[str]
+    source_channel_id: str
+
+
+@dataclass(frozen=True)
+class Attachment:
+    attachment_id: str
+    post_seq: int
+    discord_message_id: str
+    source_channel_id: str
+    filename: str
+    url: Optional[str]
+    proxy_url: Optional[str]
+    content_type: Optional[str]
+    size_bytes: Optional[int]
+    height: Optional[int]
+    width: Optional[int]
 
 
 class Database:
@@ -85,16 +101,50 @@ class Database:
             body TEXT NOT NULL,
             created_at TEXT NOT NULL,
             discord_message_id TEXT UNIQUE,
-            discord_channel_id TEXT NOT NULL
+            discord_channel_id TEXT NOT NULL,
+            source_channel_id TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_posts_seq ON posts(seq);
         CREATE INDEX IF NOT EXISTS idx_posts_channel_seq ON posts(discord_channel_id, seq);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_token_sha256 ON agents(token_sha256);
+
+        CREATE TABLE IF NOT EXISTS attachments (
+            attachment_id TEXT PRIMARY KEY,
+            post_seq INTEGER NOT NULL,
+            discord_message_id TEXT NOT NULL,
+            source_channel_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            url TEXT,
+            proxy_url TEXT,
+            content_type TEXT,
+            size_bytes INTEGER,
+            height INTEGER,
+            width INTEGER,
+            FOREIGN KEY(post_seq) REFERENCES posts(seq) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_attachments_post_seq ON attachments(post_seq);
+
+        CREATE TABLE IF NOT EXISTS ingestion_state (
+            source_channel_id TEXT PRIMARY KEY,
+            last_message_id TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         """
 
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(schema)
+
+            # Lightweight migrations for older DBs.
+            cols = [r["name"] for r in conn.execute("PRAGMA table_info(posts)").fetchall()]
+            if "source_channel_id" not in cols:
+                conn.execute("ALTER TABLE posts ADD COLUMN source_channel_id TEXT;")
+                cols.append("source_channel_id")
+            if "source_channel_id" in cols:
+                conn.execute("UPDATE posts SET source_channel_id = discord_channel_id WHERE source_channel_id IS NULL;")
 
     def setting_get(self, key: str) -> Optional[str]:
         with self.connect() as conn:
@@ -162,6 +212,7 @@ class Database:
         created_at: str,
         discord_message_id: Optional[str],
         discord_channel_id: str,
+        source_channel_id: str,
     ) -> Optional[int]:
         post_id = str(uuid.uuid4())
         try:
@@ -170,10 +221,20 @@ class Database:
                 cur.execute(
                     """
                     INSERT INTO posts(
-                        post_id,author_kind,author_id,author_name,body,created_at,discord_message_id,discord_channel_id
-                    ) VALUES(?,?,?,?,?,?,?,?)
+                        post_id,author_kind,author_id,author_name,body,created_at,discord_message_id,discord_channel_id,source_channel_id
+                    ) VALUES(?,?,?,?,?,?,?,?,?)
                     """,
-                    (post_id, author_kind, author_id, author_name, body, created_at, discord_message_id, discord_channel_id),
+                    (
+                        post_id,
+                        author_kind,
+                        author_id,
+                        author_name,
+                        body,
+                        created_at,
+                        discord_message_id,
+                        discord_channel_id,
+                        source_channel_id,
+                    ),
                 )
                 return int(cur.lastrowid)
         except sqlite3.IntegrityError:
@@ -206,11 +267,126 @@ class Database:
             ).fetchone()
             return int(row["seq"]) if row else None
 
+    def post_seq_by_discord_message_id(self, *, discord_message_id: str, discord_channel_id: str) -> Optional[int]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT seq FROM posts WHERE discord_message_id=? AND discord_channel_id=?",
+                (discord_message_id, discord_channel_id),
+            ).fetchone()
+            return int(row["seq"]) if row else None
+
+    def attachments_insert(self, attachments: list[Attachment]) -> None:
+        if not attachments:
+            return
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO attachments(
+                    attachment_id,post_seq,discord_message_id,source_channel_id,filename,url,proxy_url,content_type,size_bytes,height,width
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                [
+                    (
+                        a.attachment_id,
+                        a.post_seq,
+                        a.discord_message_id,
+                        a.source_channel_id,
+                        a.filename,
+                        a.url,
+                        a.proxy_url,
+                        a.content_type,
+                        a.size_bytes,
+                        a.height,
+                        a.width,
+                    )
+                    for a in attachments
+                ],
+            )
+
+    def attachments_for_posts(self, post_seqs: list[int]) -> dict[int, list[Attachment]]:
+        if not post_seqs:
+            return {}
+        placeholders = ",".join("?" for _ in post_seqs)
+        query = f"""
+            SELECT attachment_id,post_seq,discord_message_id,source_channel_id,filename,url,proxy_url,content_type,size_bytes,height,width
+            FROM attachments
+            WHERE post_seq IN ({placeholders})
+            ORDER BY post_seq ASC
+        """
+        with self.connect() as conn:
+            rows = conn.execute(query, post_seqs).fetchall()
+        out: dict[int, list[Attachment]] = {}
+        for row in rows:
+            att = Attachment(
+                attachment_id=str(row["attachment_id"]),
+                post_seq=int(row["post_seq"]),
+                discord_message_id=str(row["discord_message_id"]),
+                source_channel_id=str(row["source_channel_id"]),
+                filename=str(row["filename"]),
+                url=row["url"],
+                proxy_url=row["proxy_url"],
+                content_type=row["content_type"],
+                size_bytes=(int(row["size_bytes"]) if row["size_bytes"] is not None else None),
+                height=(int(row["height"]) if row["height"] is not None else None),
+                width=(int(row["width"]) if row["width"] is not None else None),
+            )
+            out.setdefault(att.post_seq, []).append(att)
+        return out
+
+    def attachment_get(self, attachment_id: str) -> Optional[Attachment]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT attachment_id,post_seq,discord_message_id,source_channel_id,filename,url,proxy_url,content_type,size_bytes,height,width
+                FROM attachments
+                WHERE attachment_id=?
+                """,
+                (attachment_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return Attachment(
+            attachment_id=str(row["attachment_id"]),
+            post_seq=int(row["post_seq"]),
+            discord_message_id=str(row["discord_message_id"]),
+            source_channel_id=str(row["source_channel_id"]),
+            filename=str(row["filename"]),
+            url=row["url"],
+            proxy_url=row["proxy_url"],
+            content_type=row["content_type"],
+            size_bytes=(int(row["size_bytes"]) if row["size_bytes"] is not None else None),
+            height=(int(row["height"]) if row["height"] is not None else None),
+            width=(int(row["width"]) if row["width"] is not None else None),
+        )
+
+    def ingestion_state_get(self, source_channel_id: str) -> Optional[str]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT last_message_id FROM ingestion_state WHERE source_channel_id=?",
+                (source_channel_id,),
+            ).fetchone()
+            return str(row["last_message_id"]) if row else None
+
+    def ingestion_state_set(self, *, source_channel_id: str, last_message_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ingestion_state(source_channel_id,last_message_id,updated_at) VALUES(?,?,?)
+                ON CONFLICT(source_channel_id) DO UPDATE SET last_message_id=excluded.last_message_id, updated_at=excluded.updated_at
+                """,
+                (source_channel_id, last_message_id, utc_now_iso()),
+            )
+
+    def ingestion_state_source_channels(self) -> list[str]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT source_channel_id FROM ingestion_state").fetchall()
+            return [str(r["source_channel_id"]) for r in rows]
+
     def inbox_fetch(self, channel_id: str, cursor: int, limit: int) -> list[Post]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT seq, post_id, author_kind, author_id, author_name, body, created_at, discord_message_id
+                SELECT seq, post_id, author_kind, author_id, author_name, body, created_at, discord_message_id, source_channel_id
                 FROM posts
                 WHERE discord_channel_id=? AND seq > ?
                 ORDER BY seq ASC
@@ -231,6 +407,7 @@ class Database:
                     body=str(row["body"]),
                     created_at=str(row["created_at"]),
                     discord_message_id=row["discord_message_id"],
+                    source_channel_id=str(row["source_channel_id"] or channel_id),
                 )
             )
         return posts

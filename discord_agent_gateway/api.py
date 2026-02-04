@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .attachments import AttachmentProxy
 from .config import Settings
 from .db import Agent, Database
 from .discord_api import DiscordAPIError, GatewayWebhookManager
@@ -45,7 +46,19 @@ class AckIn(BaseModel):
     cursor: int = Field(..., ge=0)
 
 
-def create_app(*, settings: Settings, db: Database, webhooks: GatewayWebhookManager) -> FastAPI:
+def _safe_content_disposition_filename(filename: str) -> str:
+    cleaned = filename.replace("\n", " ").replace("\r", " ").strip()
+    cleaned = cleaned.replace('"', "")
+    return cleaned or "attachment"
+
+
+def create_app(
+    *,
+    settings: Settings,
+    db: Database,
+    webhooks: GatewayWebhookManager,
+    attachments: AttachmentProxy,
+) -> FastAPI:
     app = FastAPI(title="Discord Agent Gateway", version=__version__)
 
     skill_md = build_skill_md(settings)
@@ -123,6 +136,15 @@ def create_app(*, settings: Settings, db: Database, webhooks: GatewayWebhookMana
             "gateway_split_limit": settings.discord_max_message_len,
             "mentions_enabled": False,
             "identity_fields": ["author_kind", "author_id", "author_name", "is_self", "is_human"],
+            "attachments": {
+                "supported": True,
+                "inbox_field": "attachments",
+                "download_endpoint": "/v1/attachments/{attachment_id}",
+            },
+            "threads": {
+                "supported": True,
+                "inbox_field": "source_channel_id",
+            },
         }
 
     @app.get("/v1/inbox", response_model=InboxOut)
@@ -135,6 +157,8 @@ def create_app(*, settings: Settings, db: Database, webhooks: GatewayWebhookMana
             cursor = db.receipt_get(agent.agent_id)
 
         posts = db.inbox_fetch(str(settings.discord_channel_id), cursor, limit)
+        post_seqs = [p.seq for p in posts]
+        attachments_map = db.attachments_for_posts(post_seqs)
         next_cursor = cursor
         events: List[Dict[str, Any]] = []
 
@@ -143,6 +167,20 @@ def create_app(*, settings: Settings, db: Database, webhooks: GatewayWebhookMana
 
             is_self = (post.author_kind == "agent" and post.author_id == agent.agent_id)
             is_human = (post.author_kind == "human")
+
+            atts = []
+            for att in attachments_map.get(post.seq, []):
+                atts.append(
+                    {
+                        "attachment_id": att.attachment_id,
+                        "filename": att.filename,
+                        "content_type": att.content_type,
+                        "size_bytes": att.size_bytes,
+                        "height": att.height,
+                        "width": att.width,
+                        "download_url": f"{settings.gateway_base_url}/v1/attachments/{att.attachment_id}",
+                    }
+                )
 
             events.append(
                 {
@@ -153,12 +191,32 @@ def create_app(*, settings: Settings, db: Database, webhooks: GatewayWebhookMana
                     "is_self": is_self,
                     "is_human": is_human,
                     "body": post.body,
+                    "source_channel_id": post.source_channel_id,
                     "created_at": post.created_at,
                     "discord_message_id": post.discord_message_id,
+                    "attachments": atts,
                 }
             )
 
         return InboxOut(cursor=cursor, next_cursor=next_cursor, events=events)
+
+    @app.get("/v1/attachments/{attachment_id}")
+    def download_attachment(attachment_id: str, _: Agent = Depends(require_agent)):
+        resolved = attachments.resolve(attachment_id)
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{_safe_content_disposition_filename(resolved.filename)}"',
+        }
+        if resolved.size_bytes is not None:
+            headers["Content-Length"] = str(resolved.size_bytes)
+
+        return StreamingResponse(
+            attachments.iter_download(resolved.url),
+            media_type=resolved.content_type,
+            headers=headers,
+        )
 
     @app.post("/v1/ack")
     def ack(inp: AckIn, agent: Agent = Depends(require_agent)) -> Dict[str, Any]:
@@ -198,6 +256,7 @@ def create_app(*, settings: Settings, db: Database, webhooks: GatewayWebhookMana
                 created_at=utc_now_iso(),
                 discord_message_id=msg_id,
                 discord_channel_id=str(settings.discord_channel_id),
+                source_channel_id=str(settings.discord_channel_id),
             )
             if seq is None and msg_id:
                 seq = db.post_mark_as_agent_by_discord_message_id(

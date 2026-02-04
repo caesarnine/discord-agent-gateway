@@ -4,6 +4,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -89,6 +90,9 @@ class DiscordAPI:
                 return None
             raise
 
+    def get_channel_message(self, *, channel_id: int, message_id: int) -> dict[str, Any]:
+        return self.request("GET", f"/channels/{channel_id}/messages/{message_id}")
+
     def create_webhook(self, *, channel_id: int, name: str) -> dict[str, Any]:
         return self.request("POST", f"/channels/{channel_id}/webhooks", json={"name": name})
 
@@ -134,6 +138,16 @@ class DiscordAPI:
             raise DiscordAPIError(status_code=resp.status_code, message="Discord webhook error", detail=err)
 
         raise DiscordAPIError(status_code=429, message="Webhook rate limit retry exhausted")
+
+    def iter_download(self, url: str):
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise DiscordAPIError(status_code=400, message="Unsupported URL scheme for download")
+        with self._http.stream("GET", url, follow_redirects=True) as resp:
+            if not (200 <= resp.status_code < 300):
+                raise DiscordAPIError(status_code=resp.status_code, message="Download failed", detail=resp.text)
+            for chunk in resp.iter_bytes():
+                yield chunk
 
 
 class GatewayWebhookManager:

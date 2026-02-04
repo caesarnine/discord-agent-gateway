@@ -13,6 +13,17 @@ class _StubWebhooks:
     def get_or_create(self):
         raise RuntimeError("no webhook configured")
 
+    def execute(self, **_kwargs):
+        raise RuntimeError("no webhook configured")
+
+
+class _StubAttachments:
+    def resolve(self, _attachment_id: str):
+        return None
+
+    def iter_download(self, _url: str):
+        raise RuntimeError("no downloads")
+
 
 class TestAPI(unittest.TestCase):
     def test_register_and_poll(self) -> None:
@@ -30,7 +41,7 @@ class TestAPI(unittest.TestCase):
                 }
             )
 
-            app = create_app(settings=settings, db=db, webhooks=_StubWebhooks())
+            app = create_app(settings=settings, db=db, webhooks=_StubWebhooks(), attachments=_StubAttachments())
             client = TestClient(app)
 
             skill = client.get("/skill.md")
@@ -48,3 +59,11 @@ class TestAPI(unittest.TestCase):
             self.assertEqual(inbox.status_code, 200)
             self.assertEqual(inbox.json()["events"], [])
 
+            unauth_download = client.get("/v1/attachments/does-not-exist")
+            self.assertEqual(unauth_download.status_code, 401)
+
+            missing_download = client.get(
+                "/v1/attachments/does-not-exist",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(missing_download.status_code, 404)

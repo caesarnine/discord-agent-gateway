@@ -8,6 +8,7 @@ import threading
 import uvicorn
 
 from . import __version__
+from .attachments import AttachmentProxy
 from .api import create_app
 from .bot import build_discord_bot
 from .config import Settings
@@ -29,6 +30,9 @@ def _print_effective_config(settings: Settings) -> None:
     print(f"- discord_channel_id: {settings.discord_channel_id}")
     print(f"- db_path: {settings.db_path}")
     print(f"- discord_webhook_url_set: {bool(settings.discord_webhook_url)}")
+    print(f"- backfill_enabled: {settings.backfill_enabled}")
+    print(f"- backfill_seed_limit: {settings.backfill_seed_limit}")
+    print(f"- backfill_archived_thread_limit: {settings.backfill_archived_thread_limit}")
     print(f"- log_level: {settings.log_level}")
 
 
@@ -57,8 +61,9 @@ def main(argv: list[str] | None = None) -> None:
 
     discord_api = DiscordAPI(bot_token=settings.discord_bot_token, api_base=settings.discord_api_base)
     webhooks = GatewayWebhookManager(settings=settings, db=db, discord=discord_api)
+    attachments = AttachmentProxy(db=db, discord=discord_api)
 
-    app = create_app(settings=settings, db=db, webhooks=webhooks)
+    app = create_app(settings=settings, db=db, webhooks=webhooks, attachments=attachments)
 
     if args.mode == "api":
         logger.info("Starting API only on %s:%s", settings.gateway_host, settings.gateway_port)
@@ -82,4 +87,3 @@ def main(argv: list[str] | None = None) -> None:
 
     logger.info("Starting Discord bot.")
     bot.run(settings.discord_bot_token)
-
