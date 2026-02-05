@@ -1,110 +1,69 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass(frozen=True)
-class Settings:
-    log_level: str
+class Settings(BaseSettings):
+    """
+    Environment-driven configuration.
 
-    discord_bot_token: str
-    discord_channel_id: int
-    discord_webhook_url: str
+    Loads from:
+    - Process environment variables
+    - Optional `.env` file in the working directory (if present)
+    """
 
-    db_path: Path
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-    gateway_host: str
-    gateway_port: int
-    gateway_base_url: str
+    log_level: str = Field("INFO", validation_alias="LOG_LEVEL")
 
-    discord_api_base: str
-    discord_max_message_len: int
+    discord_bot_token: str = Field(..., validation_alias="DISCORD_BOT_TOKEN")
+    discord_channel_id: int = Field(..., validation_alias="DISCORD_CHANNEL_ID")
+    discord_webhook_url: str = Field("", validation_alias="DISCORD_WEBHOOK_URL")
 
-    backfill_enabled: bool
-    backfill_seed_limit: int
-    backfill_archived_thread_limit: int
+    db_path: Path = Field(Path("data/agent_gateway.db"), validation_alias="DB_PATH")
 
-    @classmethod
-    def from_env(cls, environ: Mapping[str, str]) -> "Settings":
-        log_level = (environ.get("LOG_LEVEL") or "INFO").upper().strip() or "INFO"
+    gateway_host: str = Field("127.0.0.1", validation_alias="GATEWAY_HOST")
+    gateway_port: int = Field(8000, validation_alias="GATEWAY_PORT")
+    gateway_base_url: str = Field("", validation_alias="GATEWAY_BASE_URL")
 
-        discord_bot_token = (environ.get("DISCORD_BOT_TOKEN") or "").strip()
-        discord_webhook_url = (environ.get("DISCORD_WEBHOOK_URL") or "").strip()
+    discord_api_base: str = Field("https://discord.com/api/v10", validation_alias="DISCORD_API_BASE")
+    discord_max_message_len: int = Field(1900, validation_alias="DISCORD_MAX_MESSAGE_LEN")
 
-        channel_raw = (environ.get("DISCORD_CHANNEL_ID") or "").strip()
-        try:
-            discord_channel_id = int(channel_raw) if channel_raw else 0
-        except ValueError as exc:
-            raise ValueError("DISCORD_CHANNEL_ID must be an integer.") from exc
+    backfill_enabled: bool = Field(True, validation_alias="BACKFILL_ENABLED")
+    backfill_seed_limit: int = Field(200, validation_alias="BACKFILL_SEED_LIMIT")
+    backfill_archived_thread_limit: int = Field(25, validation_alias="BACKFILL_ARCHIVED_THREAD_LIMIT")
 
-        db_path = Path((environ.get("DB_PATH") or "data/agent_gateway.db")).expanduser()
+    @model_validator(mode="after")
+    def _normalize_and_validate(self) -> "Settings":
+        log_level = (self.log_level or "INFO").upper().strip() or "INFO"
+        object.__setattr__(self, "log_level", log_level)
 
-        gateway_host = (environ.get("GATEWAY_HOST") or "127.0.0.1").strip() or "127.0.0.1"
-        port_raw = (environ.get("GATEWAY_PORT") or "8000").strip() or "8000"
-        try:
-            gateway_port = int(port_raw)
-        except ValueError as exc:
-            raise ValueError("GATEWAY_PORT must be an integer.") from exc
+        discord_webhook_url = (self.discord_webhook_url or "").strip()
+        object.__setattr__(self, "discord_webhook_url", discord_webhook_url)
 
-        gateway_base_url = (environ.get("GATEWAY_BASE_URL") or "").strip()
-        if not gateway_base_url:
+        discord_api_base = (self.discord_api_base or "").strip() or "https://discord.com/api/v10"
+        object.__setattr__(self, "discord_api_base", discord_api_base)
+
+        gateway_host = (self.gateway_host or "127.0.0.1").strip() or "127.0.0.1"
+        object.__setattr__(self, "gateway_host", gateway_host)
+
+        base = (self.gateway_base_url or "").strip()
+        if not base:
             docs_host = gateway_host
             if docs_host in ("0.0.0.0", "::"):
                 docs_host = "127.0.0.1"
-            gateway_base_url = f"http://{docs_host}:{gateway_port}"
-        gateway_base_url = gateway_base_url.rstrip("/")
+            base = f"http://{docs_host}:{self.gateway_port}"
+        base = base.rstrip("/")
+        object.__setattr__(self, "gateway_base_url", base)
 
-        discord_api_base = (environ.get("DISCORD_API_BASE") or "https://discord.com/api/v10").strip()
-        if not discord_api_base:
-            discord_api_base = "https://discord.com/api/v10"
-
-        max_len_raw = (environ.get("DISCORD_MAX_MESSAGE_LEN") or "").strip()
-        if max_len_raw:
-            try:
-                discord_max_message_len = int(max_len_raw)
-            except ValueError as exc:
-                raise ValueError("DISCORD_MAX_MESSAGE_LEN must be an integer.") from exc
-        else:
-            discord_max_message_len = 1900
-
-        backfill_enabled_raw = (environ.get("BACKFILL_ENABLED") or "true").strip().lower()
-        backfill_enabled = backfill_enabled_raw not in ("0", "false", "no", "off")
-
-        seed_raw = (environ.get("BACKFILL_SEED_LIMIT") or "200").strip() or "200"
-        try:
-            backfill_seed_limit = int(seed_raw)
-        except ValueError as exc:
-            raise ValueError("BACKFILL_SEED_LIMIT must be an integer.") from exc
-
-        archived_raw = (environ.get("BACKFILL_ARCHIVED_THREAD_LIMIT") or "25").strip() or "25"
-        try:
-            backfill_archived_thread_limit = int(archived_raw)
-        except ValueError as exc:
-            raise ValueError("BACKFILL_ARCHIVED_THREAD_LIMIT must be an integer.") from exc
-
-        settings = cls(
-            log_level=log_level,
-            discord_bot_token=discord_bot_token,
-            discord_channel_id=discord_channel_id,
-            discord_webhook_url=discord_webhook_url,
-            db_path=db_path,
-            gateway_host=gateway_host,
-            gateway_port=gateway_port,
-            gateway_base_url=gateway_base_url,
-            discord_api_base=discord_api_base,
-            discord_max_message_len=discord_max_message_len,
-            backfill_enabled=backfill_enabled,
-            backfill_seed_limit=backfill_seed_limit,
-            backfill_archived_thread_limit=backfill_archived_thread_limit,
-        )
-        settings.validate()
-        return settings
-
-    def validate(self) -> None:
         errors: list[str] = []
-
         if not self.discord_bot_token:
             errors.append("Missing DISCORD_BOT_TOKEN.")
         if not self.discord_channel_id:
@@ -112,10 +71,8 @@ class Settings:
 
         if not (1 <= self.gateway_port <= 65535):
             errors.append("GATEWAY_PORT must be between 1 and 65535.")
-
         if not (1 <= self.discord_max_message_len <= 2000):
             errors.append("DISCORD_MAX_MESSAGE_LEN must be between 1 and 2000.")
-
         if self.backfill_seed_limit < 0:
             errors.append("BACKFILL_SEED_LIMIT must be >= 0.")
         if self.backfill_archived_thread_limit < 0:
@@ -123,3 +80,6 @@ class Settings:
 
         if errors:
             raise ValueError(" ".join(errors))
+
+        return self
+

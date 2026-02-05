@@ -31,7 +31,7 @@ class TestAPI(unittest.TestCase):
             db = Database(Path(tmp) / "test.db")
             db.init_schema()
 
-            settings = Settings.from_env(
+            settings = Settings.model_validate(
                 {
                     "DISCORD_BOT_TOKEN": "x",
                     "DISCORD_CHANNEL_ID": "123",

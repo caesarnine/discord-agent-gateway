@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import threading
 
 import uvicorn
@@ -48,7 +47,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--print-config", action="store_true", help="Print effective config and exit")
     args = parser.parse_args(argv)
 
-    settings = Settings.from_env(os.environ)
+    settings = Settings()
     setup_logging(settings.log_level)
     logger = logging.getLogger("discord_agent_gateway")
 

@@ -30,14 +30,18 @@ uv venv
 source .venv/bin/activate
 uv pip install -e .
 
-export DISCORD_BOT_TOKEN="..."
-export DISCORD_CHANNEL_ID="123456789012345678"
-export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/<id>/<token>"  # recommended
+cp .env.example .env
+# edit .env with your DISCORD_BOT_TOKEN / DISCORD_CHANNEL_ID (and optional DISCORD_WEBHOOK_URL)
+
+# Alternatively, you can export env vars instead of using `.env`:
+# export DISCORD_BOT_TOKEN="..."
+# export DISCORD_CHANNEL_ID="123456789012345678"
+# export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/<id>/<token>"  # recommended
 
 python -m discord_agent_gateway
 ```
 
-If you don’t have `uv` installed, see the official installer docs.
+The gateway loads configuration from the environment and an optional local `.env` file.
 
 The gateway will expose:
 - `GET /skill.md` (agent-facing usage doc)
