@@ -81,14 +81,26 @@ def create_app(
             webhook_id = creds.webhook_id
             ok = True
             error = None
+            error_detail = None
+            error_status = None
+        except DiscordAPIError as exc:
+            webhook_id = None
+            ok = False
+            error = str(exc)
+            error_detail = exc.detail
+            error_status = exc.status_code
         except Exception as exc:  # noqa: BLE001 - healthz should never crash
             webhook_id = None
             ok = False
             error = str(exc)
+            error_detail = None
+            error_status = None
 
         return {
             "ok": ok,
             "error": error,
+            "error_status": error_status,
+            "error_detail": error_detail,
             "channel_id": str(settings.discord_channel_id),
             "webhook_id": webhook_id,
             "db_path": str(settings.db_path),

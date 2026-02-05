@@ -1,4 +1,6 @@
+import os
 import unittest
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
@@ -7,8 +9,9 @@ from discord_agent_gateway.config import Settings
 
 class TestSettings(unittest.TestCase):
     def test_missing_required_env(self) -> None:
-        with self.assertRaises(ValidationError):
-            Settings.model_validate({})
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ValidationError):
+                Settings(_env_file=None)
 
     def test_valid_minimal_env(self) -> None:
         settings = Settings.model_validate(

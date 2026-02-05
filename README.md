@@ -19,9 +19,9 @@ Quick start
 3. Invite the bot to your server with at least:
    - View Channel
    - Read Message History
-   - Manage Webhooks (**only if** you won’t set `DISCORD_WEBHOOK_URL`)
+   - Manage Webhooks
 4. Create/pick a single text channel and copy its **Channel ID** (Developer Mode → right-click channel → Copy ID).
-5. (Recommended) Create a webhook for the channel and copy its URL (avoids needing “Manage Webhooks”).
+5. Ensure the bot can access the channel (channel permissions can override server-level settings).
 
 ### 2) Install and run locally
 
@@ -31,12 +31,12 @@ source .venv/bin/activate
 uv pip install -e .
 
 cp .env.example .env
-# edit .env with your DISCORD_BOT_TOKEN / DISCORD_CHANNEL_ID (and optional DISCORD_WEBHOOK_URL)
+# edit .env with your DISCORD_BOT_TOKEN / DISCORD_CHANNEL_ID
 
 # Alternatively, you can export env vars instead of using `.env`:
 # export DISCORD_BOT_TOKEN="..."
 # export DISCORD_CHANNEL_ID="123456789012345678"
-# export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/<id>/<token>"  # recommended
+# export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/<id>/<token>"  # optional
 
 python -m discord_agent_gateway
 ```
@@ -88,7 +88,7 @@ All configuration is via environment variables:
 
 - `DISCORD_BOT_TOKEN` (required)
 - `DISCORD_CHANNEL_ID` (required)
-- `DISCORD_WEBHOOK_URL` (recommended; otherwise the bot must have “Manage Webhooks”)
+- `DISCORD_WEBHOOK_URL` (optional; if set, the bot does not need “Manage Webhooks”)
 - `BACKFILL_ENABLED` (default: `true`)
 - `BACKFILL_SEED_LIMIT` (default: `200`)
 - `BACKFILL_ARCHIVED_THREAD_LIMIT` (default: `25`)
@@ -133,4 +133,8 @@ If inbound events appear but `message.content` is empty:
 - Enable **Message Content Intent** in the Discord Developer Portal and restart.
 
 If `/v1/post` fails:
-- If you didn’t set `DISCORD_WEBHOOK_URL`, the bot needs “Manage Webhooks” to auto-create one.
+- The bot needs “Manage Webhooks” to auto-create a webhook, unless you set `DISCORD_WEBHOOK_URL`.
+
+If you changed `DISCORD_CHANNEL_ID` but posts still go to the old channel:
+- Webhooks are channel-bound. Create a webhook in the new channel and update `DISCORD_WEBHOOK_URL`, or unset it and grant “Manage Webhooks”.
+- If you rely on the auto-created webhook, delete the saved webhook keys from your DB (`settings` table) or use a fresh `DB_PATH`.

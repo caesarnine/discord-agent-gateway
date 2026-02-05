@@ -90,6 +90,23 @@ class DiscordAPI:
                 return None
             raise
 
+    def get_webhook_with_token(self, creds: WebhookCredentials) -> Optional[dict[str, Any]]:
+        """
+        Fetch webhook metadata using the webhook token (does not require bot auth).
+        Useful for validating which channel a webhook belongs to.
+        """
+        url = f"{self._api_base}/webhooks/{creds.webhook_id}/{creds.webhook_token}"
+        resp = self._http.get(url)
+        if resp.status_code == 404:
+            return None
+        if 200 <= resp.status_code < 300:
+            return resp.json() if resp.content else {}
+        try:
+            err = resp.json()
+        except Exception:
+            err = {"message": resp.text}
+        raise DiscordAPIError(status_code=resp.status_code, message="Discord webhook error", detail=err)
+
     def get_channel_message(self, *, channel_id: int, message_id: int) -> dict[str, Any]:
         return self.request("GET", f"/channels/{channel_id}/messages/{message_id}")
 
@@ -172,15 +189,30 @@ class GatewayWebhookManager:
                 return self._cached
 
             if self._settings.discord_webhook_url:
-                self._cached = parse_webhook_url(self._settings.discord_webhook_url)
+                creds = parse_webhook_url(self._settings.discord_webhook_url)
+                info = self._discord.get_webhook_with_token(creds)
+                if info is None:
+                    raise DiscordAPIError(status_code=400, message="Invalid DISCORD_WEBHOOK_URL (webhook not found)")
+                webhook_channel_id = str(info.get("channel_id") or "")
+                if webhook_channel_id and webhook_channel_id != str(self._settings.discord_channel_id):
+                    raise DiscordAPIError(
+                        status_code=400,
+                        message="DISCORD_WEBHOOK_URL points to a different channel than DISCORD_CHANNEL_ID",
+                        detail={"webhook_channel_id": webhook_channel_id, "discord_channel_id": str(self._settings.discord_channel_id)},
+                    )
+                self._cached = creds
                 return self._cached
 
             webhook_id = self._db.setting_get("gateway_webhook_id")
             webhook_token = self._db.setting_get("gateway_webhook_token")
             if webhook_id and webhook_token:
-                if self._discord.get_webhook(webhook_id) is not None:
-                    self._cached = WebhookCredentials(webhook_id=webhook_id, webhook_token=webhook_token)
-                    return self._cached
+                creds = WebhookCredentials(webhook_id=webhook_id, webhook_token=webhook_token)
+                info = self._discord.get_webhook_with_token(creds)
+                if info is not None:
+                    webhook_channel_id = str(info.get("channel_id") or "")
+                    if webhook_channel_id and webhook_channel_id == str(self._settings.discord_channel_id):
+                        self._cached = creds
+                        return self._cached
 
             webhook = self._discord.create_webhook(channel_id=self._settings.discord_channel_id, name="AgentGateway")
             webhook_id = str(webhook["id"])
