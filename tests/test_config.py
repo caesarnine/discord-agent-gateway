@@ -21,3 +21,14 @@ class TestSettings(unittest.TestCase):
             }
         )
         self.assertEqual(settings.discord_channel_id, 123)
+        self.assertEqual(settings.registration_mode, "closed")
+
+    def test_invalid_registration_mode(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings.model_validate(
+                {
+                    "DISCORD_BOT_TOKEN": "x",
+                    "DISCORD_CHANNEL_ID": "123",
+                    "REGISTRATION_MODE": "nope",
+                }
+            )

@@ -19,6 +19,15 @@ class Agent:
 
 
 @dataclass(frozen=True)
+class AgentAdmin:
+    agent_id: str
+    name: str
+    avatar_url: Optional[str]
+    created_at: str
+    revoked_at: Optional[str]
+
+
+@dataclass(frozen=True)
 class AgentCredentials:
     agent_id: str
     token: str
@@ -52,6 +61,23 @@ class Attachment:
     width: Optional[int]
 
 
+@dataclass(frozen=True)
+class Invite:
+    invite_id: str
+    label: Optional[str]
+    max_uses: int
+    used_count: int
+    created_at: str
+    expires_at: Optional[str]
+    revoked_at: Optional[str]
+
+
+@dataclass(frozen=True)
+class InviteCreateResult:
+    invite: Invite
+    code: str
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = path
@@ -83,7 +109,8 @@ class Database:
             name TEXT NOT NULL,
             avatar_url TEXT,
             token_sha256 TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            revoked_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS receipts (
@@ -110,6 +137,8 @@ class Database:
 
         CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_token_sha256 ON agents(token_sha256);
 
+        CREATE INDEX IF NOT EXISTS idx_agents_revoked_at ON agents(revoked_at);
+
         CREATE TABLE IF NOT EXISTS attachments (
             attachment_id TEXT PRIMARY KEY,
             post_seq INTEGER NOT NULL,
@@ -132,6 +161,20 @@ class Database:
             last_message_id TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS invites (
+            invite_id TEXT PRIMARY KEY,
+            label TEXT,
+            code_sha256 TEXT NOT NULL UNIQUE,
+            max_uses INTEGER NOT NULL,
+            used_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            revoked_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_invites_revoked_at ON invites(revoked_at);
+        CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at);
         """
 
         with self.connect() as conn:
@@ -146,6 +189,10 @@ class Database:
             if "source_channel_id" in cols:
                 conn.execute("UPDATE posts SET source_channel_id = discord_channel_id WHERE source_channel_id IS NULL;")
 
+            agent_cols = [r["name"] for r in conn.execute("PRAGMA table_info(agents)").fetchall()]
+            if "revoked_at" not in agent_cols:
+                conn.execute("ALTER TABLE agents ADD COLUMN revoked_at TEXT;")
+
     def setting_get(self, key: str) -> Optional[str]:
         with self.connect() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -159,30 +206,186 @@ class Database:
                 (key, value),
             )
 
-    def agent_create(self, name: str, avatar_url: Optional[str]) -> AgentCredentials:
+    def _agent_create_in_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        name: str,
+        avatar_url: Optional[str],
+    ) -> AgentCredentials:
         agent_id = str(uuid.uuid4())
         token = secrets.token_urlsafe(32)
         token_hash = sha256_hex(token)
+        conn.execute(
+            "INSERT INTO agents(agent_id,name,avatar_url,token_sha256,created_at,revoked_at) VALUES(?,?,?,?,?,NULL)",
+            (agent_id, name, avatar_url, token_hash, utc_now_iso()),
+        )
+        conn.execute("INSERT OR IGNORE INTO receipts(agent_id,last_seq) VALUES(?,0)", (agent_id,))
+        return AgentCredentials(agent_id=agent_id, token=token)
+
+    def agent_create(self, name: str, avatar_url: Optional[str]) -> AgentCredentials:
+        with self.connect() as conn:
+            return self._agent_create_in_conn(conn, name=name, avatar_url=avatar_url)
+
+    def agent_create_with_invite(
+        self,
+        *,
+        name: str,
+        avatar_url: Optional[str],
+        invite_code: str,
+    ) -> Optional[AgentCredentials]:
+        code_hash = sha256_hex(invite_code.strip())
+        now_iso = utc_now_iso()
 
         with self.connect() as conn:
-            conn.execute(
-                "INSERT INTO agents(agent_id,name,avatar_url,token_sha256,created_at) VALUES(?,?,?,?,?)",
-                (agent_id, name, avatar_url, token_hash, utc_now_iso()),
+            cur = conn.execute(
+                """
+                UPDATE invites
+                SET used_count = used_count + 1
+                WHERE code_sha256 = ?
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                  AND used_count < max_uses
+                """,
+                (code_hash, now_iso),
             )
-            conn.execute("INSERT OR IGNORE INTO receipts(agent_id,last_seq) VALUES(?,0)", (agent_id,))
-
-        return AgentCredentials(agent_id=agent_id, token=token)
+            if cur.rowcount != 1:
+                return None
+            return self._agent_create_in_conn(conn, name=name, avatar_url=avatar_url)
 
     def agent_by_token(self, token: str) -> Optional[Agent]:
         token_hash = sha256_hex(token)
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT agent_id,name,avatar_url FROM agents WHERE token_sha256=?",
+                "SELECT agent_id,name,avatar_url FROM agents WHERE token_sha256=? AND revoked_at IS NULL",
                 (token_hash,),
             ).fetchone()
         if not row:
             return None
         return Agent(agent_id=str(row["agent_id"]), name=str(row["name"]), avatar_url=row["avatar_url"])
+
+    def agents_list(self) -> list[AgentAdmin]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT agent_id,name,avatar_url,created_at,revoked_at
+                FROM agents
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+        return [
+            AgentAdmin(
+                agent_id=str(r["agent_id"]),
+                name=str(r["name"]),
+                avatar_url=r["avatar_url"],
+                created_at=str(r["created_at"]),
+                revoked_at=r["revoked_at"],
+            )
+            for r in rows
+        ]
+
+    def agent_revoke(self, agent_id: str) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE agents
+                SET revoked_at = ?
+                WHERE agent_id = ? AND revoked_at IS NULL
+                """,
+                (utc_now_iso(), agent_id),
+            )
+            return cur.rowcount == 1
+
+    def agent_rotate_token(self, agent_id: str) -> Optional[str]:
+        token = secrets.token_urlsafe(32)
+        token_hash = sha256_hex(token)
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE agents
+                SET token_sha256=?
+                WHERE agent_id=? AND revoked_at IS NULL
+                """,
+                (token_hash, agent_id),
+            )
+            if cur.rowcount != 1:
+                return None
+        return token
+
+    def invite_create(
+        self,
+        *,
+        label: Optional[str],
+        max_uses: int,
+        expires_at: Optional[str],
+    ) -> InviteCreateResult:
+        if max_uses <= 0:
+            raise ValueError("max_uses must be > 0")
+        normalized_label = (label or "").strip() or None
+
+        for _ in range(5):
+            invite_id = str(uuid.uuid4())
+            code = secrets.token_urlsafe(24)
+            code_hash = sha256_hex(code)
+            created_at = utc_now_iso()
+            try:
+                with self.connect() as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO invites(invite_id,label,code_sha256,max_uses,used_count,created_at,expires_at,revoked_at)
+                        VALUES(?,?,?,?,0,?,?,NULL)
+                        """,
+                        (invite_id, normalized_label, code_hash, max_uses, created_at, expires_at),
+                    )
+            except sqlite3.IntegrityError:
+                continue
+
+            invite = Invite(
+                invite_id=invite_id,
+                label=normalized_label,
+                max_uses=max_uses,
+                used_count=0,
+                created_at=created_at,
+                expires_at=expires_at,
+                revoked_at=None,
+            )
+            return InviteCreateResult(invite=invite, code=code)
+
+        raise RuntimeError("Failed to create invite after retries")
+
+    def invite_list(self) -> list[Invite]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT invite_id,label,max_uses,used_count,created_at,expires_at,revoked_at
+                FROM invites
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+        return [
+            Invite(
+                invite_id=str(r["invite_id"]),
+                label=r["label"],
+                max_uses=int(r["max_uses"]),
+                used_count=int(r["used_count"]),
+                created_at=str(r["created_at"]),
+                expires_at=r["expires_at"],
+                revoked_at=r["revoked_at"],
+            )
+            for r in rows
+        ]
+
+    def invite_revoke(self, invite_id: str) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE invites
+                SET revoked_at = ?
+                WHERE invite_id = ? AND revoked_at IS NULL
+                """,
+                (utc_now_iso(), invite_id),
+            )
+            return cur.rowcount == 1
 
     def receipt_get(self, agent_id: str) -> int:
         with self.connect() as conn:

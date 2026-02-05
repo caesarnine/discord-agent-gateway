@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +37,13 @@ class Settings(BaseSettings):
     discord_api_base: str = Field("https://discord.com/api/v10", validation_alias="DISCORD_API_BASE")
     discord_max_message_len: int = Field(1900, validation_alias="DISCORD_MAX_MESSAGE_LEN")
 
+    registration_mode: Literal["closed", "invite", "open"] = Field("closed", validation_alias="REGISTRATION_MODE")
+    admin_api_token: str = Field("", validation_alias="ADMIN_API_TOKEN")
+    register_rate_limit_count: int = Field(10, validation_alias="REGISTER_RATE_LIMIT_COUNT")
+    register_rate_limit_window_seconds: int = Field(60, validation_alias="REGISTER_RATE_LIMIT_WINDOW_SECONDS")
+
+    healthz_verbose: bool = Field(False, validation_alias="HEALTHZ_VERBOSE")
+
     backfill_enabled: bool = Field(True, validation_alias="BACKFILL_ENABLED")
     backfill_seed_limit: int = Field(200, validation_alias="BACKFILL_SEED_LIMIT")
     backfill_archived_thread_limit: int = Field(25, validation_alias="BACKFILL_ARCHIVED_THREAD_LIMIT")
@@ -50,6 +58,12 @@ class Settings(BaseSettings):
 
         discord_api_base = (self.discord_api_base or "").strip() or "https://discord.com/api/v10"
         object.__setattr__(self, "discord_api_base", discord_api_base)
+
+        registration_mode = (self.registration_mode or "closed").strip().lower()
+        object.__setattr__(self, "registration_mode", registration_mode)
+
+        admin_api_token = (self.admin_api_token or "").strip()
+        object.__setattr__(self, "admin_api_token", admin_api_token)
 
         gateway_host = (self.gateway_host or "127.0.0.1").strip() or "127.0.0.1"
         object.__setattr__(self, "gateway_host", gateway_host)
@@ -73,6 +87,12 @@ class Settings(BaseSettings):
             errors.append("GATEWAY_PORT must be between 1 and 65535.")
         if not (1 <= self.discord_max_message_len <= 2000):
             errors.append("DISCORD_MAX_MESSAGE_LEN must be between 1 and 2000.")
+        if self.registration_mode not in {"closed", "invite", "open"}:
+            errors.append("REGISTRATION_MODE must be one of: closed, invite, open.")
+        if self.register_rate_limit_count <= 0:
+            errors.append("REGISTER_RATE_LIMIT_COUNT must be > 0.")
+        if self.register_rate_limit_window_seconds <= 0:
+            errors.append("REGISTER_RATE_LIMIT_WINDOW_SECONDS must be > 0.")
         if self.backfill_seed_limit < 0:
             errors.append("BACKFILL_SEED_LIMIT must be >= 0.")
         if self.backfill_archived_thread_limit < 0:
@@ -82,4 +102,3 @@ class Settings(BaseSettings):
             raise ValueError(" ".join(errors))
 
         return self
-

@@ -55,3 +55,29 @@ class TestDatabase(unittest.TestCase):
             self.assertEqual(len(inbox), 1)
             self.assertEqual(inbox[0].author_kind, "agent")
             self.assertEqual(inbox[0].author_id, creds.agent_id)
+
+    def test_invite_consumption_and_agent_revoke_rotate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            db = Database(db_path)
+            db.init_schema()
+
+            invite = db.invite_create(label="x", max_uses=1, expires_at=None)
+            created = db.agent_create_with_invite(name="A", avatar_url=None, invite_code=invite.code)
+            self.assertIsNotNone(created)
+            assert created is not None
+
+            reused = db.agent_create_with_invite(name="B", avatar_url=None, invite_code=invite.code)
+            self.assertIsNone(reused)
+
+            valid = db.agent_by_token(created.token)
+            self.assertIsNotNone(valid)
+
+            revoked = db.agent_revoke(created.agent_id)
+            self.assertTrue(revoked)
+
+            invalid_after_revoke = db.agent_by_token(created.token)
+            self.assertIsNone(invalid_after_revoke)
+
+            rotated = db.agent_rotate_token(created.agent_id)
+            self.assertIsNone(rotated)
