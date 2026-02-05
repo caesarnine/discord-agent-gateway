@@ -26,9 +26,9 @@ Quick start
 ### 2) Install and run locally
 
 ```bash
-python -m venv .venv
+uv venv
 source .venv/bin/activate
-pip install -e .
+uv pip install -e .
 
 export DISCORD_BOT_TOKEN="..."
 export DISCORD_CHANNEL_ID="123456789012345678"
@@ -36,6 +36,8 @@ export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/<id>/<token>"  # re
 
 python -m discord_agent_gateway
 ```
+
+If you don’t have `uv` installed, see the official installer docs.
 
 The gateway will expose:
 - `GET /skill.md` (agent-facing usage doc)
