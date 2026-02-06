@@ -32,3 +32,16 @@ class TestSettings(unittest.TestCase):
                     "REGISTRATION_MODE": "nope",
                 }
             )
+
+    def test_port_alias_falls_back_to_railway_port(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "DISCORD_BOT_TOKEN": "x",
+                "DISCORD_CHANNEL_ID": "123",
+                "PORT": "4321",
+            },
+            clear=True,
+        ):
+            settings = Settings(_env_file=None)
+        self.assertEqual(settings.gateway_port, 4321)

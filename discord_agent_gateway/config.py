@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     db_path: Path = Field(Path("data/agent_gateway.db"), validation_alias="DB_PATH")
 
     gateway_host: str = Field("127.0.0.1", validation_alias="GATEWAY_HOST")
-    gateway_port: int = Field(8000, validation_alias="GATEWAY_PORT")
+    # Accept Railway's injected PORT without requiring an extra mapping variable.
+    gateway_port: int = Field(8000, validation_alias=AliasChoices("GATEWAY_PORT", "PORT"))
     gateway_base_url: str = Field("", validation_alias="GATEWAY_BASE_URL")
 
     discord_api_base: str = Field("https://discord.com/api/v10", validation_alias="DISCORD_API_BASE")

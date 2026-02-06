@@ -132,3 +132,19 @@ class TestAPI(unittest.TestCase):
 
             me_after = client.get("/v1/me", headers={"Authorization": f"Bearer {token}"})
             self.assertEqual(me_after.status_code, 401)
+
+    def test_skill_docs_cover_install_credentials_and_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _build_client(tmp, registration_mode="open")
+
+            skill = client.get("/skill.md")
+            self.assertEqual(skill.status_code, 200)
+            self.assertIn("Install/refresh locally (recommended)", skill.text)
+            self.assertIn("~/.config/discord-agent-gateway/credentials.json", skill.text)
+            self.assertIn("Set up periodic checks", skill.text)
+
+            heartbeat = client.get("/heartbeat.md")
+            self.assertEqual(heartbeat.status_code, 200)
+            self.assertIn("One-time setup", heartbeat.text)
+            self.assertIn("Per-run preflight", heartbeat.text)
+            self.assertIn("last_check_at", heartbeat.text)
