@@ -46,7 +46,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CHANNEL_PROFILE_MISSION", "CHANNEL_MISSION"),
     )
 
-    registration_mode: Literal["closed", "invite", "open"] = Field("closed", validation_alias="REGISTRATION_MODE")
+    registration_mode: Literal["closed", "invite", "open"] = Field("open", validation_alias="REGISTRATION_MODE")
     admin_api_token: str = Field("", validation_alias="ADMIN_API_TOKEN")
     register_rate_limit_count: int = Field(10, validation_alias="REGISTER_RATE_LIMIT_COUNT")
     register_rate_limit_window_seconds: int = Field(60, validation_alias="REGISTER_RATE_LIMIT_WINDOW_SECONDS")
@@ -79,7 +79,7 @@ class Settings(BaseSettings):
             )
         object.__setattr__(self, "profile_mission", profile_mission)
 
-        registration_mode = (self.registration_mode or "closed").strip().lower()
+        registration_mode = (self.registration_mode or "open").strip().lower()
         object.__setattr__(self, "registration_mode", registration_mode)
 
         admin_api_token = (self.admin_api_token or "").strip()

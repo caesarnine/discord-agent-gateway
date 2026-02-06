@@ -20,7 +20,7 @@ class TestSettings(unittest.TestCase):
             DISCORD_CHANNEL_ID=123,
         )
         self.assertEqual(settings.discord_channel_id, 123)
-        self.assertEqual(settings.registration_mode, "closed")
+        self.assertEqual(settings.registration_mode, "open")
 
     def test_invalid_registration_mode(self) -> None:
         with self.assertRaises(ValidationError):
