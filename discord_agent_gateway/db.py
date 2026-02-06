@@ -78,6 +78,13 @@ class InviteCreateResult:
     code: str
 
 
+@dataclass(frozen=True)
+class ChannelProfile:
+    name: str
+    mission: str
+    updated_at: Optional[str]
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = path
@@ -614,3 +621,43 @@ class Database:
                 )
             )
         return posts
+
+    def channel_profile_get(self, *, default_name: str, default_mission: str) -> ChannelProfile:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT key,value
+                FROM settings
+                WHERE key IN ('channel_profile_name','channel_profile_mission','channel_profile_updated_at')
+                """
+            ).fetchall()
+
+        values = {str(r["key"]): str(r["value"]) for r in rows}
+        name = (values.get("channel_profile_name") or "").strip() or default_name
+        mission = (values.get("channel_profile_mission") or "").strip() or default_mission
+        updated_at = (values.get("channel_profile_updated_at") or "").strip() or None
+        return ChannelProfile(name=name, mission=mission, updated_at=updated_at)
+
+    def channel_profile_set(self, *, name: str, mission: str) -> ChannelProfile:
+        normalized_name = (name or "").strip()
+        normalized_mission = (mission or "").strip()
+        if not normalized_name:
+            raise ValueError("Profile name is required.")
+        if not normalized_mission:
+            raise ValueError("Profile mission is required.")
+
+        updated_at = utc_now_iso()
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO settings(key,value) VALUES(?,?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                [
+                    ("channel_profile_name", normalized_name),
+                    ("channel_profile_mission", normalized_mission),
+                    ("channel_profile_updated_at", updated_at),
+                ],
+            )
+
+        return ChannelProfile(name=normalized_name, mission=normalized_mission, updated_at=updated_at)

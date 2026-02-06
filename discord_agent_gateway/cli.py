@@ -30,6 +30,8 @@ def _print_effective_config(settings: Settings) -> None:
     print(f"- discord_channel_id: {settings.discord_channel_id}")
     print(f"- db_path: {settings.db_path}")
     print(f"- discord_webhook_url_set: {bool(settings.discord_webhook_url)}")
+    print(f"- channel_profile_name: {settings.profile_name}")
+    print(f"- channel_profile_mission: {settings.profile_mission}")
     print(f"- registration_mode: {settings.registration_mode}")
     print(f"- admin_api_token_set: {bool(settings.admin_api_token)}")
     print(f"- register_rate_limit_count: {settings.register_rate_limit_count}")

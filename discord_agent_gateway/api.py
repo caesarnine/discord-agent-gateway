@@ -97,6 +97,17 @@ class AdminInvitesOut(BaseModel):
     invites: List[AdminInviteOut]
 
 
+class ContextOut(BaseModel):
+    name: str
+    mission: str
+    updated_at: Optional[str]
+
+
+class AdminProfileIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    mission: str = Field(..., min_length=1, max_length=4000)
+
+
 def _safe_content_disposition_filename(filename: str) -> str:
     cleaned = filename.replace("\n", " ").replace("\r", " ").strip()
     cleaned = cleaned.replace('"', "")
@@ -144,7 +155,6 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="Discord Agent Gateway", version=__version__)
 
-    skill_md = build_skill_md(settings)
     heartbeat_md = build_heartbeat_md()
     messaging_md = build_messaging_md()
     admin_html = build_admin_html()
@@ -174,6 +184,13 @@ def create_app(
         if not token or not secrets.compare_digest(token, configured):
             raise HTTPException(status_code=401, detail="Invalid admin token")
 
+    def current_profile() -> ContextOut:
+        profile = db.channel_profile_get(
+            default_name=settings.profile_name,
+            default_mission=settings.profile_mission,
+        )
+        return ContextOut(name=profile.name, mission=profile.mission, updated_at=profile.updated_at)
+
     @app.get("/healthz")
     def healthz() -> Dict[str, Any]:
         ok = True
@@ -192,7 +209,12 @@ def create_app(
 
     @app.get("/skill.md", response_class=PlainTextResponse)
     def get_skill_md() -> str:
-        return skill_md
+        profile = current_profile()
+        return build_skill_md(
+            settings,
+            profile_name=profile.name,
+            profile_mission=profile.mission,
+        )
 
     @app.get("/heartbeat.md", response_class=PlainTextResponse)
     def get_heartbeat_md() -> str:
@@ -241,6 +263,10 @@ def create_app(
             "last_cursor": db.receipt_get(agent.agent_id),
         }
 
+    @app.get("/v1/context", response_model=ContextOut)
+    def context(_: Agent = Depends(require_agent)) -> ContextOut:
+        return current_profile()
+
     @app.get("/v1/capabilities")
     def capabilities(_: Agent = Depends(require_agent)) -> Dict[str, Any]:
         return {
@@ -259,6 +285,11 @@ def create_app(
             "threads": {
                 "supported": True,
                 "inbox_field": "source_channel_id",
+            },
+            "context": {
+                "supported": True,
+                "endpoint": "/v1/context",
+                "fields": ["name", "mission", "updated_at"],
             },
         }
 
@@ -393,12 +424,25 @@ def create_app(
 
     @app.get("/v1/admin/config")
     def admin_config(_: None = Depends(require_admin)) -> Dict[str, Any]:
+        profile = current_profile()
         return {
             "registration_mode": settings.registration_mode,
             "register_rate_limit_count": settings.register_rate_limit_count,
             "register_rate_limit_window_seconds": settings.register_rate_limit_window_seconds,
             "healthz_verbose": settings.healthz_verbose,
+            "profile_name": profile.name,
+            "profile_mission": profile.mission,
+            "profile_updated_at": profile.updated_at,
         }
+
+    @app.get("/v1/admin/profile", response_model=ContextOut)
+    def admin_get_profile(_: None = Depends(require_admin)) -> ContextOut:
+        return current_profile()
+
+    @app.put("/v1/admin/profile", response_model=ContextOut)
+    def admin_set_profile(inp: AdminProfileIn, _: None = Depends(require_admin)) -> ContextOut:
+        profile = db.channel_profile_set(name=inp.name, mission=inp.mission)
+        return ContextOut(name=profile.name, mission=profile.mission, updated_at=profile.updated_at)
 
     @app.post("/v1/admin/agents", response_model=AgentRegisterOut)
     def admin_create_agent(inp: AdminCreateAgentIn, _: None = Depends(require_admin)) -> AgentRegisterOut:

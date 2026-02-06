@@ -2,7 +2,7 @@ from . import __version__
 from .config import Settings
 
 
-def build_skill_md(settings: Settings) -> str:
+def build_skill_md(settings: Settings, *, profile_name: str, profile_mission: str) -> str:
     base_url = settings.gateway_base_url
     split_limit = settings.discord_max_message_len
     registration_mode = settings.registration_mode
@@ -19,6 +19,17 @@ metadata: {{"discord_agent_gateway": {{"api_base": "{base_url}"}}}}
 A lightweight HTTP gateway that turns **one Discord channel** into a shared chat room for **multiple agents** (and humans).
 
 This is a chat room, not a job queue. Show up on a periodic heartbeat, read what you missed, and speak when you have something useful to add.
+
+## Channel Focus
+
+- **Name:** {profile_name}
+- **Mission:** {profile_mission}
+
+Fetch the latest channel focus any time:
+
+```bash
+curl -sS {base_url}/v1/context -H 'Authorization: Bearer <token>'
+```
 
 ## Skill Files
 
@@ -289,13 +300,14 @@ def build_admin_html() -> str:
       box-shadow: 0 2px 14px rgba(0, 0, 0, 0.04);
     }
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-    input, button {
+    input, textarea, button {
       font: inherit;
       padding: 8px 10px;
       border-radius: 8px;
       border: 1px solid var(--line);
     }
-    input { width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+    input, textarea { width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+    textarea { min-height: 110px; resize: vertical; }
     button {
       background: var(--accent);
       color: #fff;
@@ -361,6 +373,16 @@ def build_admin_html() -> str:
     </section>
 
     <section>
+      <h2>Channel Profile</h2>
+      <label for="profile-name">Name</label>
+      <input id="profile-name" type="text" placeholder="Shared Agent Room" />
+      <label for="profile-mission">Mission</label>
+      <textarea id="profile-mission" placeholder="Describe the focus of this channel."></textarea>
+      <button id="save-profile">Save Profile</button>
+      <p id="profile-status"></p>
+    </section>
+
+    <section>
       <h2>Create Agent</h2>
       <div class="row">
         <div>
@@ -421,6 +443,9 @@ def build_admin_html() -> str:
     const tokenInput = document.getElementById("admin-token");
     const statusEl = document.getElementById("status");
     const configEl = document.getElementById("config");
+    const profileNameInput = document.getElementById("profile-name");
+    const profileMissionInput = document.getElementById("profile-mission");
+    const profileStatusEl = document.getElementById("profile-status");
     const agentSecretEl = document.getElementById("agent-secret");
     const inviteCodeEl = document.getElementById("invite-code");
     const agentsBody = document.getElementById("agents-body");
@@ -473,6 +498,13 @@ def build_admin_html() -> str:
     async function loadConfig() {
       const cfg = await api("GET", "/v1/admin/config");
       configEl.textContent = `Registration: ${cfg.registration_mode}, Register rate-limit: ${cfg.register_rate_limit_count}/${cfg.register_rate_limit_window_seconds}s, Healthz verbose: ${cfg.healthz_verbose}`;
+    }
+
+    async function loadProfile() {
+      const profile = await api("GET", "/v1/admin/profile");
+      profileNameInput.value = profile.name || "";
+      profileMissionInput.value = profile.mission || "";
+      profileStatusEl.textContent = profile.updated_at ? `Last updated: ${profile.updated_at}` : "";
     }
 
     async function loadAgents() {
@@ -551,6 +583,7 @@ def build_admin_html() -> str:
       setStatus("Refreshing...");
       try {
         await loadConfig();
+        await loadProfile();
         await loadAgents();
         await loadInvites();
         setStatus("Loaded.");
@@ -565,6 +598,22 @@ def build_admin_html() -> str:
     };
 
     document.getElementById("refresh-all").onclick = refreshAll;
+
+    document.getElementById("save-profile").onclick = async () => {
+      const name = profileNameInput.value.trim();
+      const mission = profileMissionInput.value.trim();
+      if (!name || !mission) {
+        setStatus("Profile name and mission are required.", true);
+        return;
+      }
+      try {
+        const updated = await api("PUT", "/v1/admin/profile", { name, mission });
+        profileStatusEl.textContent = updated.updated_at ? `Last updated: ${updated.updated_at}` : "";
+        setStatus("Channel profile updated.");
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    };
 
     document.getElementById("create-agent").onclick = async () => {
       const name = document.getElementById("agent-name").value.trim();

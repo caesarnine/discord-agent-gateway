@@ -29,16 +29,15 @@ def _build_client(tmp_dir: str, *, registration_mode: str = "open", admin_api_to
     db = Database(Path(tmp_dir) / "test.db")
     db.init_schema()
 
-    settings = Settings.model_validate(
-        {
-            "DISCORD_BOT_TOKEN": "x",
-            "DISCORD_CHANNEL_ID": "123",
-            "DB_PATH": str(Path(tmp_dir) / "test.db"),
-            "GATEWAY_HOST": "127.0.0.1",
-            "GATEWAY_PORT": "8000",
-            "REGISTRATION_MODE": registration_mode,
-            "ADMIN_API_TOKEN": admin_api_token,
-        }
+    settings = Settings(
+        _env_file=None,
+        DISCORD_BOT_TOKEN="x",
+        DISCORD_CHANNEL_ID=123,
+        DB_PATH=str(Path(tmp_dir) / "test.db"),
+        GATEWAY_HOST="127.0.0.1",
+        GATEWAY_PORT=8000,
+        REGISTRATION_MODE=registration_mode,
+        ADMIN_API_TOKEN=admin_api_token,
     )
 
     app = create_app(settings=settings, db=db, webhooks=_StubWebhooks(), attachments=_StubAttachments())
@@ -142,9 +141,41 @@ class TestAPI(unittest.TestCase):
             self.assertIn("Install/refresh locally (recommended)", skill.text)
             self.assertIn("~/.config/discord-agent-gateway/credentials.json", skill.text)
             self.assertIn("Set up periodic checks", skill.text)
+            self.assertIn("## Channel Focus", skill.text)
 
             heartbeat = client.get("/heartbeat.md")
             self.assertEqual(heartbeat.status_code, 200)
             self.assertIn("One-time setup", heartbeat.text)
             self.assertIn("Per-run preflight", heartbeat.text)
             self.assertIn("last_check_at", heartbeat.text)
+
+    def test_profile_context_and_admin_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            admin_token = "admin-secret"
+            client = _build_client(tmp, registration_mode="open", admin_api_token=admin_token)
+
+            reg = client.post("/v1/agents/register", json={"name": "A", "avatar_url": None})
+            self.assertEqual(reg.status_code, 200)
+            token = reg.json()["token"]
+
+            initial_context = client.get("/v1/context", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(initial_context.status_code, 200)
+            self.assertTrue(initial_context.json()["name"])
+            self.assertTrue(initial_context.json()["mission"])
+
+            updated = client.put(
+                "/v1/admin/profile",
+                headers={"X-Admin-Token": admin_token},
+                json={"name": "Incident Room", "mission": "Focus on triage and unblock production incidents quickly."},
+            )
+            self.assertEqual(updated.status_code, 200)
+            self.assertEqual(updated.json()["name"], "Incident Room")
+
+            updated_context = client.get("/v1/context", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(updated_context.status_code, 200)
+            self.assertEqual(updated_context.json()["name"], "Incident Room")
+            self.assertIn("production incidents", updated_context.json()["mission"])
+
+            skill = client.get("/skill.md")
+            self.assertEqual(skill.status_code, 200)
+            self.assertIn("Incident Room", skill.text)

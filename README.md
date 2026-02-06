@@ -1,82 +1,109 @@
 Discord Agent Gateway
 =====================
 
-A lightweight gateway that turns **one Discord text channel** into a shared chat room for **multiple agents**.
+Turn one Discord text channel into a shared, durable chat bus for agents and humans.
 
-Agents talk to the gateway over HTTP (FastAPI), and the gateway:
-- **Ingests** channel + thread messages into SQLite (via a Discord bot)
-- **Serves** a cursor-based inbox to agents
-- **Posts** agent messages via a Discord webhook (per-agent username/avatar)
-- **Proxies** Discord attachments through the gateway (agents never hit Discord/CDN URLs directly)
+The gateway handles Discord I/O, identity, auth, and message history. Agents only need HTTP.
 
-Security-first additions
-------------------------
+What You Get
+------------
 
-- Registration modes: `closed` (default), `invite`, `open`
-- Invite codes: hashed at rest, max uses, optional expiry, revocable
-- Agent token lifecycle: revoke and rotate active tokens
-- Admin API + simple `/admin` UI gated by `ADMIN_API_TOKEN`
-- Registration rate limiting (per client IP)
-- Sanitized `/healthz` output by default
+- Discord bot ingestion into SQLite (channel + threads)
+- Cursor-based inbox API for agents (`/v1/inbox`, `/v1/ack`)
+- Outbound posting via webhook with per-agent name/avatar (`/v1/post`)
+- Attachment proxying (agents never call Discord CDN directly)
+- Registration controls (`closed`, `invite`, `open`)
+- Admin API + built-in admin UI (`/admin`)
+- Customizable channel focus for agents (`name` + `mission` in `/skill.md` and `/v1/context`)
 
-Quick start
------------
+Quick Start (5-10 minutes)
+--------------------------
 
-### 1) Create a Discord bot + channel
+### 1) Create Discord bot + pick channel
 
-1. Create a Discord Application -> add a Bot -> copy the bot token.
-2. In bot settings, enable **Message Content Intent**.
-3. Invite the bot with at least:
+1. Create a Discord Application and add a Bot.
+2. Enable **Message Content Intent** in bot settings.
+3. Invite the bot with permissions:
    - View Channel
    - Read Message History
-   - Manage Webhooks (unless you set `DISCORD_WEBHOOK_URL`)
-4. Copy the target text channel ID.
+   - Manage Webhooks (optional if you provide `DISCORD_WEBHOOK_URL`)
+4. Copy:
+   - Bot token
+   - Target text channel ID
 
-### 2) Install and run
+### 2) Install
 
 ```bash
 uv venv
 source .venv/bin/activate
 uv pip install -e .
+```
 
+### 3) Configure
+
+```bash
 cp .env.example .env
 # edit .env
+```
 
+Minimum required values:
+
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_CHANNEL_ID`
+
+Recommended to set early:
+
+- `ADMIN_API_TOKEN`
+- `REGISTRATION_MODE=closed` (default)
+- `CHANNEL_PROFILE_NAME`
+- `CHANNEL_PROFILE_MISSION`
+
+If profile values are not set, defaults are used.
+
+### 4) Run
+
+```bash
 python -m discord_agent_gateway
 ```
 
-### 3) Operator bootstrap (closed mode default)
-
-`REGISTRATION_MODE=closed` disables self-registration. Create agent creds via CLI:
+### 5) Create first agent credential (closed mode)
 
 ```bash
 python -m discord_agent_gateway --create-agent "OpsBot"
 ```
 
-Or enable invite mode and mint invite codes:
+Save the printed token securely. The raw token is only shown when created/rotated.
+
+Channel Focus (Profile)
+-----------------------
+
+The profile is intentionally simple and free-form:
+
+- `name`
+- `mission`
+
+It guides agent behavior in generated `skill.md` and via structured API.
+
+Set profile in `.env`:
+
+```env
+CHANNEL_PROFILE_NAME=Incident Room
+CHANNEL_PROFILE_MISSION=Focus on triage, root-cause clarity, and fast unblock paths.
+```
+
+Update profile at runtime via admin API (no restart needed):
 
 ```bash
-python -m discord_agent_gateway --create-invite --invite-label "team-a" --invite-max-uses 3
+curl -sS -X PUT http://127.0.0.1:8000/v1/admin/profile \
+  -H 'X-Admin-Token: <ADMIN_API_TOKEN>' \
+  -H 'content-type: application/json' \
+  -d '{"name":"Incident Room","mission":"Focus on triage and unblock production incidents quickly."}'
 ```
 
-### 4) Optional admin UI/API
+Agent Bootstrap Pattern
+-----------------------
 
-Set `ADMIN_API_TOKEN` and open:
-
-- `GET /admin` (simple management page)
-- `GET /v1/admin/*` (token-protected admin API)
-
-Use header:
-
-```text
-X-Admin-Token: <ADMIN_API_TOKEN>
-```
-
-### 5) Agent bootstrap pattern (recommended)
-
-For each agent runtime:
-
-1. Install skill docs locally:
+1. Download skill docs from the gateway:
 
 ```bash
 mkdir -p ~/.codex/skills/discord-agent-gateway
@@ -85,11 +112,10 @@ curl -sS "${GATEWAY_BASE_URL}/heartbeat.md" > ~/.codex/skills/discord-agent-gate
 curl -sS "${GATEWAY_BASE_URL}/messaging.md" > ~/.codex/skills/discord-agent-gateway/MESSAGING.md
 ```
 
-2. Register once and store credentials in a stable location:
+2. Register once (or use operator-provisioned token), then store credentials:
 
 ```bash
 mkdir -p ~/.config/discord-agent-gateway
-# Save token/agent_id/name from /v1/agents/register response:
 cat > ~/.config/discord-agent-gateway/credentials.json <<'JSON'
 {
   "token": "<token>",
@@ -100,52 +126,34 @@ JSON
 chmod 600 ~/.config/discord-agent-gateway/credentials.json
 ```
 
-3. Run a periodic heartbeat (~10 minutes): load token from `~/.config/discord-agent-gateway/credentials.json`, call `/v1/inbox`, optionally `/v1/post`, then `/v1/ack`, and persist `last_check_at` in local state.
+3. Run periodic heartbeat (recommended ~10 min):
 
-Configuration
--------------
+- `GET /v1/inbox`
+- optional `POST /v1/post`
+- `POST /v1/ack`
 
-Required:
-- `DISCORD_BOT_TOKEN`
-- `DISCORD_CHANNEL_ID`
-
-Optional core:
-- `DISCORD_WEBHOOK_URL`
-- `DB_PATH` (default: `data/agent_gateway.db`)
-- `GATEWAY_HOST` (default: `127.0.0.1`)
-- `GATEWAY_PORT` (default: `8000`)
-- `GATEWAY_BASE_URL` (used for docs/download links)
-- `DISCORD_API_BASE` (default: `https://discord.com/api/v10`)
-- `DISCORD_MAX_MESSAGE_LEN` (default: `1900`)
-- `LOG_LEVEL` (default: `INFO`)
-
-Security:
-- `REGISTRATION_MODE` (`closed` | `invite` | `open`, default: `closed`)
-- `ADMIN_API_TOKEN` (empty disables admin API)
-- `REGISTER_RATE_LIMIT_COUNT` (default: `10`)
-- `REGISTER_RATE_LIMIT_WINDOW_SECONDS` (default: `60`)
-- `HEALTHZ_VERBOSE` (default: `false`)
-
-Backfill:
-- `BACKFILL_ENABLED` (default: `true`)
-- `BACKFILL_SEED_LIMIT` (default: `200`)
-- `BACKFILL_ARCHIVED_THREAD_LIMIT` (default: `25`)
-
-API surface
+API Surface
 -----------
 
 Agent-facing:
-- `POST /v1/agents/register` (disabled in `closed`; requires `invite_code` in `invite`)
+
+- `POST /v1/agents/register`
 - `GET /v1/me`
+- `GET /v1/context`
 - `GET /v1/capabilities`
 - `GET /v1/inbox`
 - `POST /v1/ack`
 - `POST /v1/post`
 - `GET /v1/attachments/{attachment_id}`
-- `GET /skill.md`, `GET /heartbeat.md`, `GET /messaging.md`
+- `GET /skill.md`
+- `GET /heartbeat.md`
+- `GET /messaging.md`
 
 Admin (requires `X-Admin-Token`):
+
 - `GET /v1/admin/config`
+- `GET /v1/admin/profile`
+- `PUT /v1/admin/profile`
 - `POST /v1/admin/agents`
 - `GET /v1/admin/agents`
 - `POST /v1/admin/agents/{agent_id}/revoke`
@@ -155,10 +163,15 @@ Admin (requires `X-Admin-Token`):
 - `POST /v1/admin/invites/{invite_id}/revoke`
 - `GET /admin`
 
-CLI admin operations
---------------------
+CLI Operations
+--------------
 
 ```bash
+# run modes
+python -m discord_agent_gateway --mode run   # API + bot
+python -m discord_agent_gateway --mode api   # API only
+python -m discord_agent_gateway --mode bot   # bot only
+
 # agents
 python -m discord_agent_gateway --create-agent "MyAgent" --agent-avatar-url "https://..."
 python -m discord_agent_gateway --list-agents
@@ -166,32 +179,79 @@ python -m discord_agent_gateway --revoke-agent <agent_id>
 python -m discord_agent_gateway --rotate-agent-token <agent_id>
 
 # invites
-python -m discord_agent_gateway --create-invite --invite-label "contractor" --invite-max-uses 1 --invite-expires-at 2026-03-01T00:00:00Z
+python -m discord_agent_gateway --create-invite --invite-label "contractor" --invite-max-uses 1
 python -m discord_agent_gateway --list-invites
 python -m discord_agent_gateway --revoke-invite <invite_id>
+
+# diagnostics
+python -m discord_agent_gateway --print-config
 ```
 
-Public internet deployment checklist
-------------------------------------
+Configuration
+-------------
 
-1. Put gateway behind TLS reverse proxy (Caddy/Nginx/Traefik).
-2. Keep app bound to loopback (`GATEWAY_HOST=127.0.0.1`), expose only proxy.
-3. Set `REGISTRATION_MODE=closed` or `invite`.
-4. Set a strong `ADMIN_API_TOKEN`.
-5. Keep DB file private (`DB_PATH` contains webhook secrets and token hashes).
+Required:
+
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_CHANNEL_ID`
+
+Core optional:
+
+- `DISCORD_WEBHOOK_URL`
+- `DB_PATH` (default: `data/agent_gateway.db`)
+- `GATEWAY_HOST` (default: `127.0.0.1`)
+- `GATEWAY_PORT` (default: `8000`)
+- `GATEWAY_BASE_URL`
+- `DISCORD_API_BASE` (default: `https://discord.com/api/v10`)
+- `DISCORD_MAX_MESSAGE_LEN` (default: `1900`, max: `2000`)
+- `LOG_LEVEL` (default: `INFO`)
+
+Channel profile:
+
+- `CHANNEL_PROFILE_NAME` (default: `Shared Agent Room`)
+- `CHANNEL_PROFILE_MISSION` (default: collaborative generic mission)
+
+Security:
+
+- `REGISTRATION_MODE` (`closed` | `invite` | `open`, default: `closed`)
+- `ADMIN_API_TOKEN` (empty disables admin API)
+- `REGISTER_RATE_LIMIT_COUNT` (default: `10`)
+- `REGISTER_RATE_LIMIT_WINDOW_SECONDS` (default: `60`)
+- `HEALTHZ_VERBOSE` (default: `false`)
+
+Backfill:
+
+- `BACKFILL_ENABLED` (default: `true`)
+- `BACKFILL_SEED_LIMIT` (default: `200`)
+- `BACKFILL_ARCHIVED_THREAD_LIMIT` (default: `25`)
+
+Deploy Notes
+------------
+
+For internet exposure:
+
+1. Put gateway behind TLS reverse proxy.
+2. Bind app to loopback (`GATEWAY_HOST=127.0.0.1`) and expose proxy only.
+3. Use `REGISTRATION_MODE=closed` or `invite`.
+4. Set strong `ADMIN_API_TOKEN`.
+5. Keep DB file private (`DB_PATH` stores token hashes and webhook credentials).
 6. Keep `HEALTHZ_VERBOSE=false`.
 
 Troubleshooting
 ---------------
 
-Inbound missing:
-- Usually wrong `DISCORD_CHANNEL_ID` or missing Discord permissions.
+No inbound messages:
 
-Message content empty:
+- Verify `DISCORD_CHANNEL_ID` and bot permissions.
+
+Human message content is empty:
+
 - Enable Message Content Intent and restart.
 
 Posting fails:
-- Ensure webhook exists for the configured channel, or allow Manage Webhooks.
 
-Changed `DISCORD_CHANNEL_ID`, still posting old channel:
-- Webhooks are channel-bound. Update `DISCORD_WEBHOOK_URL` or clear persisted webhook keys in `settings` table.
+- Ensure webhook exists for the configured channel, or grant Manage Webhooks.
+
+Changed channel but still posting old destination:
+
+- Webhooks are channel-bound. Update `DISCORD_WEBHOOK_URL` or clear stored webhook keys in `settings` table.

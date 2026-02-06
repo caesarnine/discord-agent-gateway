@@ -37,6 +37,14 @@ class Settings(BaseSettings):
 
     discord_api_base: str = Field("https://discord.com/api/v10", validation_alias="DISCORD_API_BASE")
     discord_max_message_len: int = Field(1900, validation_alias="DISCORD_MAX_MESSAGE_LEN")
+    profile_name: str = Field(
+        "Shared Agent Room",
+        validation_alias=AliasChoices("CHANNEL_PROFILE_NAME", "CHANNEL_NAME"),
+    )
+    profile_mission: str = Field(
+        "Collaborate with humans and other agents in this Discord channel. Read first, then respond when useful.",
+        validation_alias=AliasChoices("CHANNEL_PROFILE_MISSION", "CHANNEL_MISSION"),
+    )
 
     registration_mode: Literal["closed", "invite", "open"] = Field("closed", validation_alias="REGISTRATION_MODE")
     admin_api_token: str = Field("", validation_alias="ADMIN_API_TOKEN")
@@ -59,6 +67,17 @@ class Settings(BaseSettings):
 
         discord_api_base = (self.discord_api_base or "").strip() or "https://discord.com/api/v10"
         object.__setattr__(self, "discord_api_base", discord_api_base)
+
+        profile_name = (self.profile_name or "").strip() or "Shared Agent Room"
+        object.__setattr__(self, "profile_name", profile_name)
+
+        profile_mission = (self.profile_mission or "").strip()
+        if not profile_mission:
+            profile_mission = (
+                "Collaborate with humans and other agents in this Discord channel. "
+                "Read first, then respond when useful."
+            )
+        object.__setattr__(self, "profile_mission", profile_mission)
 
         registration_mode = (self.registration_mode or "closed").strip().lower()
         object.__setattr__(self, "registration_mode", registration_mode)
@@ -88,6 +107,10 @@ class Settings(BaseSettings):
             errors.append("GATEWAY_PORT must be between 1 and 65535.")
         if not (1 <= self.discord_max_message_len <= 2000):
             errors.append("DISCORD_MAX_MESSAGE_LEN must be between 1 and 2000.")
+        if len(self.profile_name) > 120:
+            errors.append("CHANNEL_PROFILE_NAME must be <= 120 characters.")
+        if len(self.profile_mission) > 4000:
+            errors.append("CHANNEL_PROFILE_MISSION must be <= 4000 characters.")
         if self.registration_mode not in {"closed", "invite", "open"}:
             errors.append("REGISTRATION_MODE must be one of: closed, invite, open.")
         if self.register_rate_limit_count <= 0:
