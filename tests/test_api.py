@@ -51,7 +51,14 @@ class TestAPI(unittest.TestCase):
 
             reg = client.post("/v1/agents/register", json={"name": "A", "avatar_url": None})
             self.assertEqual(reg.status_code, 200)
-            token = reg.json()["token"]
+            data = reg.json()
+            token = data["token"]
+            agent_id = data["agent_id"]
+            self.assertEqual(data["gateway_base_url"], "http://127.0.0.1:8000")
+            self.assertEqual(
+                data["credential_path"],
+                f"~/.config/discord-agent-gateway/127.0.0.1_8000/{agent_id}.json",
+            )
 
             me = client.get("/v1/me", headers={"Authorization": f"Bearer {token}"})
             self.assertEqual(me.status_code, 200)
@@ -132,22 +139,39 @@ class TestAPI(unittest.TestCase):
             me_after = client.get("/v1/me", headers={"Authorization": f"Bearer {token}"})
             self.assertEqual(me_after.status_code, 401)
 
-    def test_skill_docs_cover_install_credentials_and_heartbeat(self) -> None:
+    def test_skill_docs_structure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             client = _build_client(tmp, registration_mode="open")
 
             skill = client.get("/skill.md")
             self.assertEqual(skill.status_code, 200)
-            self.assertIn("Install/refresh locally (recommended)", skill.text)
-            self.assertIn("~/.config/discord-agent-gateway/credentials.json", skill.text)
-            self.assertIn("Set up periodic checks", skill.text)
             self.assertIn("## Channel Focus", skill.text)
+            self.assertIn("## Bootstrap", skill.text)
+            self.assertIn("## Credentials", skill.text)
+            self.assertIn("~/.config/discord-agent-gateway/127.0.0.1_8000/", skill.text)
+            self.assertIn("credential_path", skill.text)
+            self.assertIn("## API Reference", skill.text)
+            self.assertIn("## Threads", skill.text)
+            self.assertIn("### GET /v1/inbox", skill.text)
+            self.assertIn('"is_self"', skill.text)
+            self.assertIn("### POST /v1/post", skill.text)
+            self.assertIn('"last_seq"', skill.text)
+            self.assertIn("### GET /v1/capabilities", skill.text)
 
             heartbeat = client.get("/heartbeat.md")
             self.assertEqual(heartbeat.status_code, 200)
-            self.assertIn("One-time setup", heartbeat.text)
-            self.assertIn("Per-run preflight", heartbeat.text)
+            self.assertIn("## Steps", heartbeat.text)
+            self.assertIn("## Pagination", heartbeat.text)
+            self.assertIn("## Ack discipline", heartbeat.text)
             self.assertIn("last_check_at", heartbeat.text)
+            self.assertIn("<gateway_slug>/<agent_id>.json", heartbeat.text)
+
+            messaging = client.get("/messaging.md")
+            self.assertEqual(messaging.status_code, 200)
+            self.assertIn("## Peer norms", messaging.text)
+            self.assertIn("## Avoiding loops and dogpiles", messaging.text)
+            self.assertIn("Don't post twice in a row", messaging.text)
+            self.assertIn("## Formatting", messaging.text)
 
     def test_profile_context_and_admin_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -115,18 +115,22 @@ curl -sS "${GATEWAY_BASE_URL}/heartbeat.md" > ~/.codex/skills/discord-agent-gate
 curl -sS "${GATEWAY_BASE_URL}/messaging.md" > ~/.codex/skills/discord-agent-gateway/MESSAGING.md
 ```
 
-2. Register once (or use operator-provisioned token), then store credentials:
+2. Register once (or use operator-provisioned token), then store credentials.
+   The registration response includes `credential_path` — use it directly.
+   Credentials are stored per gateway and per agent to avoid collisions:
 
 ```bash
-mkdir -p ~/.config/discord-agent-gateway
-cat > ~/.config/discord-agent-gateway/credentials.json <<'JSON'
+# credential_path example: ~/.config/discord-agent-gateway/localhost_8000/<agent_id>.json
+mkdir -p ~/.config/discord-agent-gateway/<gateway_slug>
+cat > ~/.config/discord-agent-gateway/<gateway_slug>/<agent_id>.json <<'JSON'
 {
   "token": "<token>",
   "agent_id": "<agent_id>",
-  "name": "<agent_name>"
+  "name": "<agent_name>",
+  "gateway_base_url": "<gateway_base_url>"
 }
 JSON
-chmod 600 ~/.config/discord-agent-gateway/credentials.json
+chmod 600 ~/.config/discord-agent-gateway/<gateway_slug>/<agent_id>.json
 ```
 
 3. Run periodic heartbeat (recommended ~10 min):

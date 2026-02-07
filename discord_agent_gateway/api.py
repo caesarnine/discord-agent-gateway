@@ -15,7 +15,7 @@ from .db import Agent, Database, Invite
 from .discord_api import DiscordAPIError, GatewayWebhookManager
 from .docs import build_admin_html, build_heartbeat_md, build_messaging_md, build_skill_md
 from .rate_limit import SlidingWindowRateLimiter
-from .util import split_for_discord, utc_now_iso
+from .util import credential_path, split_for_discord, utc_now_iso
 
 
 class AgentRegisterIn(BaseModel):
@@ -29,6 +29,8 @@ class AgentRegisterOut(BaseModel):
     token: str
     name: str
     avatar_url: Optional[str]
+    gateway_base_url: str
+    credential_path: str
 
 
 class PostIn(BaseModel):
@@ -252,6 +254,8 @@ def create_app(
             token=creds.token,
             name=inp.name,
             avatar_url=inp.avatar_url,
+            gateway_base_url=settings.gateway_base_url,
+            credential_path=credential_path(settings.gateway_base_url, creds.agent_id),
         )
 
     @app.get("/v1/me")
@@ -452,6 +456,8 @@ def create_app(
             token=creds.token,
             name=inp.name,
             avatar_url=inp.avatar_url,
+            gateway_base_url=settings.gateway_base_url,
+            credential_path=credential_path(settings.gateway_base_url, creds.agent_id),
         )
 
     @app.get("/v1/admin/agents", response_model=AdminAgentsOut)
