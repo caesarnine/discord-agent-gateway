@@ -14,6 +14,7 @@ from .config import Settings
 from .db import Database
 from .discord_api import DiscordAPI
 from .logging_setup import setup_logging
+from .profile_sync import sync_discord_channel_profile
 from .util import parse_iso_utc
 from .webhook import GatewayWebhookManager
 
@@ -158,6 +159,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     discord_api = DiscordAPI(bot_token=settings.discord_bot_token, api_base=settings.discord_api_base)
+    sync_discord_channel_profile(settings=settings, db=db, discord=discord_api, logger=logger)
     webhooks = GatewayWebhookManager(settings=settings, db=db, discord=discord_api)
     attachments = AttachmentProxy(db=db, discord=discord_api)
 

@@ -173,10 +173,52 @@ class TestAPI(unittest.TestCase):
             self.assertIn("Don't post twice in a row", messaging.text)
             self.assertIn("## Formatting", messaging.text)
 
+    def test_profile_uses_discord_metadata_as_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "test.db")
+            db.init_schema()
+            db.setting_set("discord_channel_name", "math-talk")
+            db.setting_set("discord_channel_topic", "Discuss proofs and conjectures.")
+
+            settings = Settings(
+                _env_file=None,
+                DISCORD_BOT_TOKEN="x",
+                DISCORD_CHANNEL_ID=123,
+                DB_PATH=str(Path(tmp) / "test.db"),
+                GATEWAY_HOST="127.0.0.1",
+                GATEWAY_PORT=8000,
+                ADMIN_API_TOKEN="admin-secret",
+            )
+            app = create_app(settings=settings, db=db, webhooks=_StubWebhooks(), attachments=_StubAttachments())
+            client = TestClient(app)
+
+            reg = client.post("/v1/agents/register", json={"name": "A", "avatar_url": None})
+            token = reg.json()["token"]
+
+            ctx = client.get("/v1/context", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(ctx.status_code, 200)
+            self.assertEqual(ctx.json()["name"], "math-talk")
+            self.assertEqual(ctx.json()["mission"], "Discuss proofs and conjectures.")
+
     def test_profile_context_and_admin_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             admin_token = "admin-secret"
-            client = _build_client(tmp, registration_mode="open", admin_api_token=admin_token)
+            db = Database(Path(tmp) / "test.db")
+            db.init_schema()
+            db.setting_set("discord_channel_name", "general")
+            db.setting_set("discord_channel_topic", "General discussion.")
+
+            settings = Settings(
+                _env_file=None,
+                DISCORD_BOT_TOKEN="x",
+                DISCORD_CHANNEL_ID=123,
+                DB_PATH=str(Path(tmp) / "test.db"),
+                GATEWAY_HOST="127.0.0.1",
+                GATEWAY_PORT=8000,
+                ADMIN_API_TOKEN=admin_token,
+            )
+            app = create_app(settings=settings, db=db, webhooks=_StubWebhooks(), attachments=_StubAttachments())
+            client = TestClient(app)
 
             reg = client.post("/v1/agents/register", json={"name": "A", "avatar_url": None})
             self.assertEqual(reg.status_code, 200)
@@ -184,8 +226,8 @@ class TestAPI(unittest.TestCase):
 
             initial_context = client.get("/v1/context", headers={"Authorization": f"Bearer {token}"})
             self.assertEqual(initial_context.status_code, 200)
-            self.assertTrue(initial_context.json()["name"])
-            self.assertTrue(initial_context.json()["mission"])
+            self.assertEqual(initial_context.json()["name"], "general")
+            self.assertEqual(initial_context.json()["mission"], "General discussion.")
 
             updated = client.put(
                 "/v1/admin/profile",

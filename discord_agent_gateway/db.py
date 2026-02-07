@@ -563,13 +563,26 @@ class Database:
                 """
                 SELECT key,value
                 FROM settings
-                WHERE key IN ('channel_profile_name','channel_profile_mission','channel_profile_updated_at')
+                WHERE key IN (
+                    'channel_profile_name','channel_profile_mission','channel_profile_updated_at',
+                    'discord_channel_name','discord_channel_topic'
+                )
                 """
             ).fetchall()
 
         values = {str(r["key"]): str(r["value"]) for r in rows}
-        name = (values.get("channel_profile_name") or "").strip() or default_name
-        mission = (values.get("channel_profile_mission") or "").strip() or default_mission
+
+        # Resolution order: admin override → env var → Discord metadata → empty
+        name = (
+            (values.get("channel_profile_name") or "").strip()
+            or default_name
+            or (values.get("discord_channel_name") or "").strip()
+        )
+        mission = (
+            (values.get("channel_profile_mission") or "").strip()
+            or default_mission
+            or (values.get("discord_channel_topic") or "").strip()
+        )
         updated_at = (values.get("channel_profile_updated_at") or "").strip() or None
         return ChannelProfile(name=name, mission=mission, updated_at=updated_at)
 

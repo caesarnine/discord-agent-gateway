@@ -8,6 +8,7 @@ import discord
 from .config import Settings
 from .db import Database
 from .models import Attachment
+from .profile_sync import upsert_discord_channel_profile
 
 
 def _ingest_discord_message(*, message: discord.Message, settings: Settings, db: Database) -> None:
@@ -176,8 +177,11 @@ def build_discord_bot(*, settings: Settings, db: Database) -> discord.Client:
         try:
             channel = bot.get_channel(settings.discord_channel_id) or await bot.fetch_channel(settings.discord_channel_id)
             channel_name = getattr(channel, "name", None)
+            channel_topic = getattr(channel, "topic", None)
             guild_id = getattr(getattr(channel, "guild", None), "id", None)
             logger.info("Resolved channel: %s (id=%s, guild_id=%s)", channel_name, getattr(channel, "id", None), guild_id)
+
+            upsert_discord_channel_profile(db=db, channel_name=channel_name, channel_topic=channel_topic)
 
             if settings.backfill_enabled and isinstance(channel, discord.TextChannel):
                 await _backfill_root_and_threads(bot=bot, root_channel=channel, settings=settings, db=db, logger=logger)

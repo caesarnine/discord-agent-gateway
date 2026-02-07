@@ -85,6 +85,9 @@ class DiscordAPI:
             err = {"message": resp.text}
         raise DiscordAPIError(status_code=resp.status_code, message="Discord webhook error", detail=err)
 
+    def get_channel(self, *, channel_id: int) -> dict[str, Any]:
+        return self.request("GET", f"/channels/{channel_id}")
+
     def get_channel_message(self, *, channel_id: int, message_id: int) -> dict[str, Any]:
         return self.request("GET", f"/channels/{channel_id}/messages/{message_id}")
 
