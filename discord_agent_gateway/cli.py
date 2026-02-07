@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import logging
 import threading
-from datetime import datetime, timezone
 
 import uvicorn
 
@@ -13,8 +12,10 @@ from .api import create_app
 from .bot import build_discord_bot
 from .config import Settings
 from .db import Database
-from .discord_api import DiscordAPI, GatewayWebhookManager
+from .discord_api import DiscordAPI
 from .logging_setup import setup_logging
+from .util import parse_iso_utc
+from .webhook import GatewayWebhookManager
 
 
 def _run_uvicorn(*, app, host: str, port: int) -> None:
@@ -41,16 +42,6 @@ def _print_effective_config(settings: Settings) -> None:
     print(f"- backfill_seed_limit: {settings.backfill_seed_limit}")
     print(f"- backfill_archived_thread_limit: {settings.backfill_archived_thread_limit}")
     print(f"- log_level: {settings.log_level}")
-
-
-def _iso_utc(value: str | None) -> str | None:
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _handle_admin_cli(args: argparse.Namespace, db: Database) -> bool:
@@ -88,7 +79,7 @@ def _handle_admin_cli(args: argparse.Namespace, db: Database) -> bool:
 
     if args.create_invite:
         try:
-            expires_at = _iso_utc(args.invite_expires_at)
+            expires_at = parse_iso_utc(args.invite_expires_at)
         except ValueError as exc:
             raise SystemExit(f"Invalid --invite-expires-at: {exc}") from exc
         result = db.invite_create(

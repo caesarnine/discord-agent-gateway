@@ -4,94 +4,29 @@ import secrets
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .models import (
+    Agent,
+    AgentAdmin,
+    AgentCredentials,
+    Attachment,
+    ChannelProfile,
+    Invite,
+    InviteCreateResult,
+    Post,
+)
 from .util import sha256_hex, utc_now_iso
-
-
-@dataclass(frozen=True)
-class Agent:
-    agent_id: str
-    name: str
-    avatar_url: Optional[str]
-
-
-@dataclass(frozen=True)
-class AgentAdmin:
-    agent_id: str
-    name: str
-    avatar_url: Optional[str]
-    created_at: str
-    revoked_at: Optional[str]
-
-
-@dataclass(frozen=True)
-class AgentCredentials:
-    agent_id: str
-    token: str
-
-
-@dataclass(frozen=True)
-class Post:
-    seq: int
-    post_id: str
-    author_kind: str
-    author_id: str
-    author_name: Optional[str]
-    body: str
-    created_at: str
-    discord_message_id: Optional[str]
-    source_channel_id: str
-
-
-@dataclass(frozen=True)
-class Attachment:
-    attachment_id: str
-    post_seq: int
-    discord_message_id: str
-    source_channel_id: str
-    filename: str
-    url: Optional[str]
-    proxy_url: Optional[str]
-    content_type: Optional[str]
-    size_bytes: Optional[int]
-    height: Optional[int]
-    width: Optional[int]
-
-
-@dataclass(frozen=True)
-class Invite:
-    invite_id: str
-    label: Optional[str]
-    max_uses: int
-    used_count: int
-    created_at: str
-    expires_at: Optional[str]
-    revoked_at: Optional[str]
-
-
-@dataclass(frozen=True)
-class InviteCreateResult:
-    invite: Invite
-    code: str
-
-
-@dataclass(frozen=True)
-class ChannelProfile:
-    name: str
-    mission: str
-    updated_at: Optional[str]
 
 
 class Database:
     def __init__(self, path: Path):
         self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
-    def connect(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def transaction(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON;")
@@ -184,7 +119,7 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at);
         """
 
-        with self.connect() as conn:
+        with self.transaction() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(schema)
 
@@ -201,12 +136,12 @@ class Database:
                 conn.execute("ALTER TABLE agents ADD COLUMN revoked_at TEXT;")
 
     def setting_get(self, key: str) -> Optional[str]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             return str(row["value"]) if row else None
 
     def setting_set(self, key: str, value: str) -> None:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 "INSERT INTO settings(key,value) VALUES(?,?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -231,7 +166,7 @@ class Database:
         return AgentCredentials(agent_id=agent_id, token=token)
 
     def agent_create(self, name: str, avatar_url: Optional[str]) -> AgentCredentials:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             return self._agent_create_in_conn(conn, name=name, avatar_url=avatar_url)
 
     def agent_create_with_invite(
@@ -244,7 +179,7 @@ class Database:
         code_hash = sha256_hex(invite_code.strip())
         now_iso = utc_now_iso()
 
-        with self.connect() as conn:
+        with self.transaction() as conn:
             cur = conn.execute(
                 """
                 UPDATE invites
@@ -262,7 +197,7 @@ class Database:
 
     def agent_by_token(self, token: str) -> Optional[Agent]:
         token_hash = sha256_hex(token)
-        with self.connect() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 "SELECT agent_id,name,avatar_url FROM agents WHERE token_sha256=? AND revoked_at IS NULL",
                 (token_hash,),
@@ -272,7 +207,7 @@ class Database:
         return Agent(agent_id=str(row["agent_id"]), name=str(row["name"]), avatar_url=row["avatar_url"])
 
     def agents_list(self) -> list[AgentAdmin]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT agent_id,name,avatar_url,created_at,revoked_at
@@ -292,7 +227,7 @@ class Database:
         ]
 
     def agent_revoke(self, agent_id: str) -> bool:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             cur = conn.execute(
                 """
                 UPDATE agents
@@ -306,7 +241,7 @@ class Database:
     def agent_rotate_token(self, agent_id: str) -> Optional[str]:
         token = secrets.token_urlsafe(32)
         token_hash = sha256_hex(token)
-        with self.connect() as conn:
+        with self.transaction() as conn:
             cur = conn.execute(
                 """
                 UPDATE agents
@@ -336,7 +271,7 @@ class Database:
             code_hash = sha256_hex(code)
             created_at = utc_now_iso()
             try:
-                with self.connect() as conn:
+                with self.transaction() as conn:
                     conn.execute(
                         """
                         INSERT INTO invites(invite_id,label,code_sha256,max_uses,used_count,created_at,expires_at,revoked_at)
@@ -361,7 +296,7 @@ class Database:
         raise RuntimeError("Failed to create invite after retries")
 
     def invite_list(self) -> list[Invite]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT invite_id,label,max_uses,used_count,created_at,expires_at,revoked_at
@@ -383,7 +318,7 @@ class Database:
         ]
 
     def invite_revoke(self, invite_id: str) -> bool:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             cur = conn.execute(
                 """
                 UPDATE invites
@@ -395,12 +330,12 @@ class Database:
             return cur.rowcount == 1
 
     def receipt_get(self, agent_id: str) -> int:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             row = conn.execute("SELECT last_seq FROM receipts WHERE agent_id=?", (agent_id,)).fetchone()
             return int(row["last_seq"]) if row else 0
 
     def receipt_set(self, agent_id: str, last_seq: int) -> None:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 "INSERT INTO receipts(agent_id,last_seq) VALUES(?,?) "
                 "ON CONFLICT(agent_id) DO UPDATE SET last_seq=excluded.last_seq",
@@ -408,7 +343,7 @@ class Database:
             )
 
     def post_exists_by_discord_message_id(self, discord_message_id: str) -> bool:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             row = conn.execute("SELECT 1 FROM posts WHERE discord_message_id=?", (discord_message_id,)).fetchone()
             return row is not None
 
@@ -426,7 +361,7 @@ class Database:
     ) -> Optional[int]:
         post_id = str(uuid.uuid4())
         try:
-            with self.connect() as conn:
+            with self.transaction() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     """
@@ -462,7 +397,7 @@ class Database:
         If a webhook message was ingested before the send-time insert, rewrite it to preserve agent identity.
         Returns the row seq if the message exists.
         """
-        with self.connect() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 UPDATE posts
@@ -478,7 +413,7 @@ class Database:
             return int(row["seq"]) if row else None
 
     def post_seq_by_discord_message_id(self, *, discord_message_id: str, discord_channel_id: str) -> Optional[int]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 "SELECT seq FROM posts WHERE discord_message_id=? AND discord_channel_id=?",
                 (discord_message_id, discord_channel_id),
@@ -488,7 +423,7 @@ class Database:
     def attachments_insert(self, attachments: list[Attachment]) -> None:
         if not attachments:
             return
-        with self.connect() as conn:
+        with self.transaction() as conn:
             conn.executemany(
                 """
                 INSERT OR IGNORE INTO attachments(
@@ -523,7 +458,7 @@ class Database:
             WHERE post_seq IN ({placeholders})
             ORDER BY post_seq ASC
         """
-        with self.connect() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(query, post_seqs).fetchall()
         out: dict[int, list[Attachment]] = {}
         for row in rows:
@@ -544,7 +479,7 @@ class Database:
         return out
 
     def attachment_get(self, attachment_id: str) -> Optional[Attachment]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT attachment_id,post_seq,discord_message_id,source_channel_id,filename,url,proxy_url,content_type,size_bytes,height,width
@@ -570,7 +505,7 @@ class Database:
         )
 
     def ingestion_state_get(self, source_channel_id: str) -> Optional[str]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 "SELECT last_message_id FROM ingestion_state WHERE source_channel_id=?",
                 (source_channel_id,),
@@ -578,7 +513,7 @@ class Database:
             return str(row["last_message_id"]) if row else None
 
     def ingestion_state_set(self, *, source_channel_id: str, last_message_id: str) -> None:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO ingestion_state(source_channel_id,last_message_id,updated_at) VALUES(?,?,?)
@@ -588,12 +523,12 @@ class Database:
             )
 
     def ingestion_state_source_channels(self) -> list[str]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             rows = conn.execute("SELECT source_channel_id FROM ingestion_state").fetchall()
             return [str(r["source_channel_id"]) for r in rows]
 
     def inbox_fetch(self, channel_id: str, cursor: int, limit: int) -> list[Post]:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT seq, post_id, author_kind, author_id, author_name, body, created_at, discord_message_id, source_channel_id
@@ -623,7 +558,7 @@ class Database:
         return posts
 
     def channel_profile_get(self, *, default_name: str, default_mission: str) -> ChannelProfile:
-        with self.connect() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT key,value
@@ -647,7 +582,7 @@ class Database:
             raise ValueError("Profile mission is required.")
 
         updated_at = utc_now_iso()
-        with self.connect() as conn:
+        with self.transaction() as conn:
             conn.executemany(
                 """
                 INSERT INTO settings(key,value) VALUES(?,?)

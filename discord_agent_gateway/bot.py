@@ -6,7 +6,8 @@ from datetime import timezone
 import discord
 
 from .config import Settings
-from .db import Attachment, Database
+from .db import Database
+from .models import Attachment
 
 
 def _ingest_discord_message(*, message: discord.Message, settings: Settings, db: Database) -> None:

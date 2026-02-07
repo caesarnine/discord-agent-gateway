@@ -23,3 +23,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["discord_agent_gateway*"]
 exclude = ["skills*", "tests*"]
+
+[tool.setuptools.package-data]
+discord_agent_gateway = ["templates/*.html", "templates/*.md"]

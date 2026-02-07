@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
-from .db import Attachment, Database
-from .discord_api import DiscordAPI, DiscordAPIError
+from .db import Database
+from .discord_api import DiscordAPI
+from .models import Attachment
 
 
 ALLOWED_DISCORD_CDN_HOSTS = {
@@ -81,4 +82,3 @@ class AttachmentProxy:
     def iter_download(self, url: str):
         # Let DiscordAPI handle streaming + errors.
         return self._discord.iter_download(url)
-

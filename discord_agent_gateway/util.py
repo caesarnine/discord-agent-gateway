@@ -33,6 +33,16 @@ def credential_path(base_url: str, agent_id: str) -> str:
     return f"~/.config/discord-agent-gateway/{slug}/{agent_id}.json"
 
 
+def parse_iso_utc(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
 def split_for_discord(text: str, *, max_len: int) -> List[str]:
     """
     Split long messages into Discord-safe chunks.
@@ -64,4 +74,3 @@ def split_for_discord(text: str, *, max_len: int) -> List[str]:
         i = j
 
     return parts if parts else [""]
-
